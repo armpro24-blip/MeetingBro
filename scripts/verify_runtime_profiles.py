@@ -52,23 +52,28 @@ def _storage() -> MagicMock:
 
 
 async def main() -> int:
-    assert normalize_runtime_profile("low-latency") == "low_latency"
+    # Legacy profile aliases should normalize to the current three-profile model.
+    assert normalize_runtime_profile("low-latency") == "balanced"
+    assert normalize_runtime_profile("low_latency") == "balanced"
+    assert normalize_runtime_profile("robust") == "performance"
+    assert normalize_runtime_profile("single_language") == "balanced"
     assert normalize_runtime_profile("does-not-exist") == "balanced"
 
     balanced = runtime_profile_defaults("balanced")
-    low_latency = runtime_profile_defaults("low_latency")
-    robust = runtime_profile_defaults("robust")
-    multilingual = runtime_profile_defaults("multilingual")
-    single_language = runtime_profile_defaults("single_language")
-    low_latency_settings = _runtime_settings_from_profile("low_latency")
-    robust_settings = _runtime_settings_from_profile("robust")
+    performance = runtime_profile_defaults("performance")
+    summary_only = runtime_profile_defaults("summary_only")
+    balanced_settings = _runtime_settings_from_profile("balanced")
+    performance_settings = _runtime_settings_from_profile("performance")
+    summary_only_settings = _runtime_settings_from_profile("summary_only")
 
-    assert low_latency["asr_accumulation_seconds"] < balanced["asr_accumulation_seconds"]
-    assert robust["asr_accumulation_seconds"] > balanced["asr_accumulation_seconds"]
-    assert multilingual["language_lock_enabled"] is False
-    assert single_language["language_lock_enabled"] is True
-    assert _chunk_seconds_for_profile("robust") == robust["chunk_seconds"]
-    assert low_latency_settings["asr_accumulation_seconds"] < robust_settings["asr_accumulation_seconds"]
+    # Performance favors lower latency than balanced; summary-only favors stability.
+    assert performance["asr_accumulation_seconds"] < balanced["asr_accumulation_seconds"]
+    assert summary_only["asr_accumulation_seconds"] > balanced["asr_accumulation_seconds"]
+    assert balanced["language_lock_enabled"] is False
+    assert _chunk_seconds_for_profile("performance") == performance["chunk_seconds"]
+    assert _chunk_seconds_for_profile("summary_only") == summary_only["chunk_seconds"]
+    assert performance_settings["asr_accumulation_seconds"] < summary_only_settings["asr_accumulation_seconds"]
+    assert balanced_settings["language_lock_enabled"] is False
 
     manager = SessionManager(
         SessionConfig(
@@ -83,11 +88,11 @@ async def main() -> int:
     )
     manager.update_runtime_settings(
         forced_language=None,
-        runtime_profile="single_language",
+        runtime_profile="summary_only",
         runtime_settings={
-            "audio_chunk_seconds": float(single_language["chunk_seconds"]),
-            "asr_accumulation_seconds": float(single_language["asr_accumulation_seconds"]),
-            "language_lock_enabled": bool(single_language["language_lock_enabled"]),
+            "audio_chunk_seconds": float(summary_only["chunk_seconds"]),
+            "asr_accumulation_seconds": float(summary_only["asr_accumulation_seconds"]),
+            "language_lock_enabled": bool(summary_only["language_lock_enabled"]),
         },
     )
 
@@ -98,9 +103,9 @@ async def main() -> int:
     print(f"lock:    {payload.language_lock_enabled}")
 
     ok = (
-        payload.runtime_profile == "single_language"
-        and payload.language_lock_enabled is True
-        and payload.asr_accumulation_seconds == single_language["asr_accumulation_seconds"]
+        payload.runtime_profile == "summary_only"
+        and payload.language_lock_enabled is False
+        and payload.asr_accumulation_seconds == summary_only["asr_accumulation_seconds"]
     )
     if ok:
         print("\nOK: runtime profiles normalize, map to expected settings, and update session state")

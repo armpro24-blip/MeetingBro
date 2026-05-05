@@ -6,6 +6,8 @@ MeetingBro listens to your meetings, transcribes speech in real time, translates
 
 It works with Zoom, Teams, Google Meet, BBB, and any other platform, because it captures audio directly from your computer rather than connecting to a meeting API.
 
+Platform support: Windows, macOS, and Linux.
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/armpro24-blip/MeetingBro/actions/workflows/ci.yml/badge.svg)](https://github.com/armpro24-blip/MeetingBro/actions/workflows/ci.yml)
 
@@ -25,7 +27,7 @@ It works with Zoom, Teams, Google Meet, BBB, and any other platform, because it 
 | **Rolling summary** | AI-generated summary of the last 3–5 minutes, refreshes automatically |
 | **Meeting Board** | Cumulative overview: topics, decisions, action items, open questions |
 | **Exportable notes** | Export full transcript, summary, and notes to Markdown files |
-| **System audio capture** | Capture any meeting platform's audio (Windows) |
+| **System audio capture** | Capture any meeting platform's audio (Windows native; macOS/Linux with loopback setup) |
 | **Microphone capture** | Works on Windows, macOS, and Linux (in-person meetings) |
 | **Local or cloud LLM** | Use OpenAI, Groq, Ollama, or any OpenAI-compatible API for summaries |
 
