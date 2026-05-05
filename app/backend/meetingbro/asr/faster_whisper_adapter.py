@@ -64,25 +64,77 @@ class FasterWhisperAdapter(ASRAdapter):
         self._model = None  # lazy
         self._oom_fallback_activated = False
 
+    def _compute_type_fallback_chain(self) -> list[str]:
+        preferred = (self._compute_type or "").strip().lower() or "int8"
+        device = (self._device or "cpu").strip().lower()
+
+        if device == "cpu":
+            # float16 on CPU is often unsupported/slow; prefer int8/float32 fallback.
+            order = [preferred, "int8", "float32"]
+        else:
+            order = [preferred, "float16", "int8", "float32"]
+
+        seen: set[str] = set()
+        chain: list[str] = []
+        for item in order:
+            if item not in seen:
+                seen.add(item)
+                chain.append(item)
+        return chain
+
     def _ensure_model(self):
         if self._model is None:
             from faster_whisper import WhisperModel
 
-            logger.info(
-                "loading faster-whisper model size=%s device=%s compute=%s cpu_threads=%d num_workers=%d",
-                self._model_size,
-                self._device,
-                self._compute_type,
-                self._cpu_threads,
-                self._num_workers,
-            )
-            self._model = WhisperModel(
-                self._model_size,
-                device=self._device,
-                compute_type=self._compute_type,
-                cpu_threads=self._cpu_threads,
-                num_workers=self._num_workers,
-            )
+            last_exc: Exception | None = None
+            for idx, compute_type in enumerate(self._compute_type_fallback_chain()):
+                if idx == 0:
+                    logger.info(
+                        "loading faster-whisper model size=%s device=%s compute=%s cpu_threads=%d num_workers=%d",
+                        self._model_size,
+                        self._device,
+                        compute_type,
+                        self._cpu_threads,
+                        self._num_workers,
+                    )
+                else:
+                    logger.warning(
+                        "retrying faster-whisper model load with fallback compute=%s device=%s",
+                        compute_type,
+                        self._device,
+                    )
+
+                try:
+                    self._model = WhisperModel(
+                        self._model_size,
+                        device=self._device,
+                        compute_type=compute_type,
+                        cpu_threads=self._cpu_threads,
+                        num_workers=self._num_workers,
+                    )
+                    if compute_type != self._compute_type:
+                        logger.warning(
+                            "faster-whisper compute fallback active: %s -> %s on device=%s",
+                            self._compute_type,
+                            compute_type,
+                            self._device,
+                        )
+                        self._compute_type = compute_type
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    msg = str(exc).lower()
+                    # Continue only for known compute-type incompatibility.
+                    if not (
+                        "float16" in msg
+                        or "compute type" in msg
+                        or "not support" in msg
+                        or "unsupported" in msg
+                        or "efficient" in msg
+                    ):
+                        raise
+            if self._model is None and last_exc is not None:
+                raise last_exc
         return self._model
 
     @staticmethod

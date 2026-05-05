@@ -112,8 +112,17 @@ class MicrophoneSource(AudioSource):
         try:
             import sounddevice as sd
         except Exception as exc:  # pragma: no cover
+            import sys
+            extra_hint = ""
+            if sys.platform.startswith("linux"):
+                extra_hint = (
+                    " On Linux, install PortAudio runtime/dev packages first, "
+                    "for example: `sudo apt install portaudio19-dev libportaudio2` "
+                    "then reinstall sounddevice in your venv."
+                )
             raise RuntimeError(
-                "sounddevice is required for MicrophoneSource"
+                "sounddevice is required for MicrophoneSource."
+                + extra_hint
             ) from exc
 
         loop = asyncio.get_running_loop()

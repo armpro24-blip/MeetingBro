@@ -603,8 +603,8 @@ def _build_audio_source(source: str, *, chunk_seconds: Optional[float] = None) -
     """Build an AudioSource from a URI-like spec.
 
     - "mic" or empty: microphone capture (offline / in-person mode).
-    - "loopback" / "system": WASAPI system-audio loopback (Windows-only,
-      online meeting mode — Teams/Zoom/BBB audio).
+    - "loopback" / "system": platform system-audio loopback (Windows WASAPI,
+      macOS virtual loopback device, Linux PulseAudio/PipeWire monitor).
     - "mixed": microphone + system loopback mixed together.
     - "file:<path>": replay a WAV file for the E2E vertical-slice test.
     """

@@ -49,7 +49,7 @@ It works with Zoom, Teams, Google Meet, BBB, and any other platform, because it 
 
 - You will need to type a few commands in a terminal (command prompt). The instructions are step-by-step.
 - **Windows is the easiest platform** right now. On Windows, MeetingBro can capture system audio (everything your speakers play), so it works with any meeting platform automatically.
-- On **macOS and Linux**, microphone capture works but system audio capture is not yet supported. You can still use MeetingBro for in-person meetings or with a virtual audio cable.
+- On **macOS and Linux**, microphone capture works. For online meetings, system audio capture is supported with the right setup: macOS uses a virtual loopback device plus a Multi-Output Device, and Linux uses PulseAudio/PipeWire loopback.
 - **Whisper models download automatically on first run.** The `small` model is about 460 MB. This happens once and is saved to your disk.
 - **MeetingBro has three runtime modes**: `Summary only` for weaker devices, `Balanced` for most laptops/desktops, and `Performance` for stronger machines that can trade more compute for more aggressive realtime behavior.
 - **Speech language is separate from runtime mode.** Set `Speech = Auto` for mixed-language meetings; set a specific speech language when the meeting stays in one language and you want tighter recognition.
@@ -108,7 +108,56 @@ cd app/frontend
 npm run dev
 ```
 
-The Electron window opens. Select your audio device and click **Start Session**.
+### Linux setup
+
+```bash
+# Audio dependencies
+sudo apt install portaudio19-dev libportaudio2
+
+# Optional: install the Qwen3 ASR preview backend
+pip install sherpa-onnx
+pip install huggingface_hub
+python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25', local_dir='models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25')"
+
+# Electron sandbox permissions may be required on some Linux systems
+sudo chown root:root app/frontend/node_modules/electron/dist/chrome-sandbox
+sudo chmod 4755 app/frontend/node_modules/electron/dist/chrome-sandbox
+
+npm run dev
+```
+
+### macOS setup
+
+```bash
+brew install portaudio
+brew install --cask blackhole-2ch
+
+# Optional: install the Qwen3 ASR preview backend
+pip install sherpa-onnx
+pip install huggingface_hub
+python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25', local_dir='models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25')"
+
+python3 -m pip install sounddevice
+```
+
+Then open **Audio MIDI Setup** and create a `Multi-Output Device`:
+
+1. Click `+` → `Multi-Output Device`
+2. Enable `BlackHole 2ch`
+3. Enable your speakers or headphones
+4. In `System Settings > Sound > Output`, select the new `Multi-Output Device`
+5. In MeetingBro, choose `System Audio` / `loopback`
+
+If you want to verify that macOS sees the virtual input, run:
+
+```bash
+python3 scripts/list_audio_devices.py
+```
+
+You should see a device like `BlackHole 2ch` with `max_in > 0`.
+
+If you no longer need system audio after a meeting, switch the macOS output back to your normal speakers or headphones.
+
 
 ### Choose the right mode first
 
@@ -167,7 +216,7 @@ cd app/backend
 pip install -e "."
 ```
 
-**Windows only** — also install the system audio loopback library:
+**Windows only** — install the WASAPI loopback helper library:
 
 ```bash
 pip install "soundcard>=0.4"
@@ -297,7 +346,7 @@ Before starting a session, verify:
 - [ ] Backend is running (see terminal output above)
 - [ ] Electron window has opened
 - [ ] Audio device is selected in the UI
-- [ ] For online meetings (Windows): select "System Audio" or the loopback device
+- [ ] For online meetings: select "System Audio" (macOS needs `BlackHole` + `Multi-Output Device`; Linux needs a loopback monitor)
 - [ ] For in-person meetings: select your microphone
 
 Click **Start Session** and speak a few words. You should see text appear in the transcript panel within a few seconds.
@@ -332,7 +381,7 @@ In the default setup, Whisper is the main engine. The optional Qwen3 preview pat
 
 Two audio capture modes:
 
-- **Online mode** (Windows): captures system audio — works with any meeting platform
+- **Online mode** (Windows/macOS/Linux): captures system audio (macOS needs a virtual loopback device such as BlackHole plus a Multi-Output Device)
 - **Offline mode** (all platforms): captures microphone — works for in-person meetings
 
 See [docs/architecture.md](docs/architecture.md) for a full technical overview.
@@ -356,7 +405,7 @@ Quick checks:
 | Platform | Microphone | System audio | Notes |
 |---|---|---|---|
 | Windows 10/11 | ✅ | ✅ | Full support |
-| macOS | ✅ | ⚠️ | System audio needs a virtual audio cable (e.g. BlackHole) |
+| macOS | ✅ | ⚠️ | System audio needs `BlackHole` (or similar) plus a `Multi-Output Device` |
 | Linux | ✅ | ⚠️ | System audio via PulseAudio/PipeWire loopback (manual setup) |
 
 See [docs/platform-support.md](docs/platform-support.md) for detailed instructions per platform.

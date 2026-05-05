@@ -5,10 +5,14 @@ import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+import logging
+import time
 from pathlib import Path
 from typing import Any
 
 _DOTENV_LOADED = False
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _load_dotenv_if_present() -> None:
@@ -126,7 +130,11 @@ class OpenAICompatibleClient:
         max_tokens: int,
         temperature: float = 0.2,
     ) -> str:
-        url = f"{self._cfg.base_url}/v1/chat/completions"
+        base_url = self._cfg.base_url.rstrip("/")
+        if base_url.endswith("/v1"):
+            url = f"{base_url}/chat/completions"
+        else:
+            url = f"{base_url}/v1/chat/completions"
         body: dict[str, Any] = {
             "model": self._cfg.model,
             "messages": [
@@ -146,17 +154,40 @@ class OpenAICompatibleClient:
             },
             method="POST",
         )
+        start = time.time()
+        _LOGGER.debug("LLM request start model=%s url=%s", self._cfg.model, url)
         try:
             with urllib.request.urlopen(req, timeout=self._cfg.timeout_seconds) as resp:
                 raw = resp.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
+            _LOGGER.warning(
+                "LLM HTTP error model=%s url=%s code=%s detail=%s",
+                self._cfg.model,
+                url,
+                exc.code,
+                detail,
+            )
             raise RuntimeError(f"LLM HTTP {exc.code}: {detail}") from exc
+        finally:
+            duration = time.time() - start
+            _LOGGER.debug("LLM request finished model=%s duration=%.3fs", self._cfg.model, duration)
 
         data = json.loads(raw)
-        return (
-            data.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
-        )
+        choice = data.get("choices", [{}])[0]
+        message = choice.get("message", {}) if isinstance(choice, dict) else {}
+        content = ""
+        # Primary: standard OpenAI-style chat message content
+        if isinstance(message, dict):
+            content = message.get("content") or message.get("reasoning") or message.get("text") or ""
+        # Fallbacks for other provider shapes
+        if not content:
+            content = choice.get("text") if isinstance(choice, dict) else ""
+        content = (content or "").strip()
+        if not content:
+            _LOGGER.warning(
+                "LLM returned empty content for model=%s; raw_response=%s",
+                self._cfg.model,
+                raw if len(raw) < 4000 else raw[:4000] + "...",
+            )
+        return content
