@@ -62,53 +62,33 @@ Platform support: Windows, macOS, and Linux.
 
 ## Quick Start
 
-This is the shortest path to a working session. See [Step-by-step installation](#step-by-step-installation) below for more detail.
+The fastest way to get running is with the provided install / start scripts. See [Step-by-step installation](#step-by-step-installation) below for the manual equivalent.
 
-```bash
-# 1. Clone the repo
-git clone https://github.com/armpro24-blip/MeetingBro.git
-cd MeetingBro
-
-# 2. Create a Python environment
-conda create -n MeetingBro python=3.12 -y
-conda activate MeetingBro
-
-# 3. Install the backend
-cd app/backend
-pip install -e "."
-pip install "soundcard>=0.4"   # Windows only — skip on macOS/Linux
-cd ../..
-
-# 4. Copy the config template
-# macOS / Linux
-cp .env.example .env
-
-# Windows (PowerShell)
-Copy-Item .env.example .env
-
-# Windows (Command Prompt)
-copy .env.example .env
-
-# 5. Install the frontend
-cd app/frontend
-npm install
-cd ../..
+**Windows (PowerShell):**
+```powershell
+.\scripts\install.ps1
+.\scripts\start.ps1
 ```
 
-Then open **two terminals** and run:
-
-**Terminal 1:**
+**macOS / Linux:**
 ```bash
-conda activate MeetingBro
-cd app/backend
-meetingbro-backend
+chmod +x scripts/install.sh scripts/start.sh
+./scripts/install.sh
+./scripts/start.sh
 ```
 
-**Terminal 2:**
-```bash
-cd app/frontend
-npm run dev
-```
+These scripts will:
+- Check that Python 3.12+ and Node.js 20+ are installed.
+- Create a Python virtual environment in `app/backend/.venv`.
+- Install backend dependencies (`pip install -e .`).
+- Copy `.env.example` to `app/backend/.env` if one does not exist.
+- Install frontend dependencies (`npm install`).
+- Start the backend (default port 8765; override with `BACKEND_PORT`).
+- Start the frontend dev server (`npm run dev`).
+
+Press `Ctrl+C` in the terminal to stop both services together.
+
+> **Port note:** MeetingBro backend listens on **8765** by default. The scripts let you override this with the `BACKEND_PORT` environment variable, but the frontend code also defaults to 8765. Unless you intentionally change the frontend configuration, leave `BACKEND_PORT` unchanged.
 
 ### Linux setup
 
