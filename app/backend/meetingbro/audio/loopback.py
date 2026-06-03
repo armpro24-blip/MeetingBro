@@ -123,19 +123,69 @@ class SystemAudioLoopbackSource(AudioSource):
 
     def _resolve_loopback_mic(self, sc):
         if self._speaker_name is not None:
+            logger.info("resolving loopback mic by user hint: %s", self._speaker_name)
             return sc.get_microphone(str(self._speaker_name), include_loopback=True)
+
         default_speaker = sc.default_speaker()
-        # Match the loopback mic whose name corresponds to the default speaker.
         mics = sc.all_microphones(include_loopback=True)
-        target = default_speaker.name
-        for m in mics:
-            if m.isloopback and m.name == target:
+
+        # Build a list of loopback candidates for diagnostics
+        loopbacks = [m for m in mics if m.isloopback]
+        logger.debug(
+            "default speaker: id=%r name=%r channels=%d",
+            default_speaker.id, default_speaker.name, default_speaker.channels,
+        )
+        logger.debug(
+            "available loopback mics (%d): %s",
+            len(loopbacks),
+            ", ".join(f"{m.name!r} (id={m.id!r})" for m in loopbacks),
+        )
+
+        target_id = default_speaker.id
+        target_name = default_speaker.name
+
+        # 1) Exact WASAPI id match – most reliable, works even when names differ
+        #    (e.g. Bluetooth/USB headsets whose friendly-name formatting changes).
+        for m in loopbacks:
+            if m.id == target_id:
+                logger.info(
+                    "loopback matched by id: %s (id=%r)", m.name, m.id
+                )
                 return m
-        # Fallback: first loopback mic we find.
-        for m in mics:
-            if m.isloopback:
+
+        # 2) Exact name match
+        for m in loopbacks:
+            if m.name == target_name:
+                logger.info(
+                    "loopback matched by exact name: %s (id=%r)", m.name, m.id
+                )
                 return m
-        raise RuntimeError("no WASAPI loopback device found")
+
+        # 3) Substring name match (handles minor formatting differences)
+        for m in loopbacks:
+            if target_name in m.name or m.name in target_name:
+                logger.info(
+                    "loopback matched by substring: %s (id=%r)", m.name, m.id
+                )
+                return m
+
+        # 4) Fallback: first loopback mic we find
+        if loopbacks:
+            m = loopbacks[0]
+            logger.warning(
+                "loopback fallback to first available device: %s (id=%r). "
+                "This may happen when the default output device (e.g. a Bluetooth/USB headset) "
+                "does not expose a matching loopback endpoint.",
+                m.name, m.id,
+            )
+            return m
+
+        # Nothing found – list everything we saw so the user/admin can diagnose.
+        all_names = [m.name for m in mics]
+        raise RuntimeError(
+            f"no WASAPI loopback device found. default_speaker={target_name!r} "
+            f"(id={target_id!r}). available microphones: {all_names!r}"
+        )
 
     async def stream(self) -> AsyncIterator[AudioChunk]:
         # If Linux implementation is present, yield from it.
@@ -171,7 +221,27 @@ class SystemAudioLoopbackSource(AudioSource):
             _hr = _ole32.CoInitializeEx(None, COINIT_MULTITHREADED)
             _com_owned = _hr in (0, 1)
             try:
-                with mic.recorder(samplerate=native_rate, blocksize=native_block) as rec:
+                try:
+                    rec = mic.recorder(samplerate=native_rate, blocksize=native_block)
+                except RuntimeError as fmt_exc:
+                    # Some headsets (Bluetooth/USB) report a mix-format that
+                    # soundcard cannot initialise (e.g. non-float32). Log the
+                    # details and re-raise with a actionable message.
+                    logger.error(
+                        "failed to open loopback recorder for %s (id=%r) at "
+                        "samplerate=%d blocksize=%d: %s",
+                        mic.name, mic.id, native_rate, native_block, fmt_exc,
+                    )
+                    raise RuntimeError(
+                        f"Cannot open WASAPI loopback on '{mic.name}'. "
+                        "This often happens with Bluetooth or USB headsets whose "
+                        "drivers expose an unsupported PCM format. "
+                        "Work-arounds: (1) disconnect the headset and use built-in "
+                        "speakers, (2) set the headset as default *communication* "
+                        "device but keep speakers as default *multimedia* device, "
+                        "or (3) update the headset audio driver."
+                    ) from fmt_exc
+                with rec:
                     logger.info(
                         "loopback capture started mic=%s native_rate=%d block=%d "
                         "target_rate=%d",

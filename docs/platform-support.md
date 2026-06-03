@@ -32,6 +32,8 @@ If no loopback device appears, check:
 - Your audio drivers are up to date
 - "Stereo Mix" is enabled in Windows Sound settings (right-click the speaker icon → Sounds → Recording tab → right-click to show disabled devices → enable Stereo Mix)
 
+> **Headset / headphone caveat:** Some Bluetooth and USB headsets expose a PCM format that WASAPI loopback cannot initialise. If loopback works with built-in speakers but fails as soon as you connect a headset, see [Troubleshooting: Windows loopback capture fails when headphones are connected](troubleshooting.md#windows-loopback-capture-fails-when-headphones--headset-are-connected).
+
 ### Microphone capture
 
 Works out of the box. Select your microphone in the UI.

@@ -96,6 +96,21 @@ This lists all available audio devices. Make sure you select the right one in th
 
 ---
 
+**Windows: loopback capture fails when headphones / headset are connected**
+
+Some Bluetooth and USB headsets expose an audio format that the WASAPI loopback layer cannot open (the driver reports a non-float32 mix format). Symptoms: loopback works fine with built-in speakers, but as soon as you plug in the headset the backend throws `unsupported format` or falls back silently to microphone-only capture.
+
+Work-arounds (pick one):
+
+1. **Disconnect the headset** and use built-in speakers for the meeting, then re-connect it afterwards.
+2. **Keep speakers as the default multimedia playback device** while setting the headset as the default *communication* device only (right-click the speaker icon → Sounds → Playback tab → right-click your headset → "Set as Default Communication Device", **not** "Set as Default Device").
+3. **Update the headset audio driver** – newer drivers sometimes fix the WASAPI format negotiation bug.
+4. **Use "mixed" audio source** (`?source=mixed` in the WebSocket URL or select it in the UI). This at least keeps microphone capture working while the loopback path is unavailable.
+
+If you are still stuck, run `python scripts/list_audio_devices.py` and include the **soundcard** section (especially the loopback lines) in your bug report.
+
+---
+
 **Possible cause: microphone is muted or volume is too low**
 
 Check your system volume settings. MeetingBro has a noise floor filter — very quiet audio will be ignored. Try speaking louder or moving closer to the microphone.
