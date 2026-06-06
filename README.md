@@ -1,3 +1,7 @@
+<div align="right">
+  English | <a href="README.zh-CN.md">简体中文</a>
+</div>
+
 # MeetingBro
 
 **Open-source local-first AI meeting assistant for live transcription, translation, and meeting summaries.**
@@ -426,7 +430,7 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)** for how to set up a development envir
 
 Add these topics to the repository on GitHub for discoverability:
 
-`meeting-assistant` `speech-to-text` `transcription` `whisper` `local-ai` `electron` `fastapi` `python` `multilingual` `privacy`
+`meeting-assistant` `speech-to-text` `live-transcription` `transcription` `ai-summary` `live-translation` `whisper` `local-ai` `offline-first` `privacy` `electron` `fastapi` `python` `multilingual` `open-source`
 
 ---
 
