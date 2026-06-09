@@ -3,8 +3,15 @@ import type { CSSProperties } from "react";
 import type { ExportMeetingResponse, SummarySnapshot, TranscriptSegment } from "./types";
 import { useSessionSocket } from "./session/useSessionSocket";
 import type { ExportMeetingInput } from "./session/useSessionSocket";
+import { useBackendStatus } from "./system/useBackendStatus";
+import { BackendGate } from "./components/BackendGate";
+import { SettingsModal } from "./components/SettingsModal";
+import { fetchAudioDevices } from "./system/backendApi";
+import type { AudioDevices } from "./system/backendApi";
 
 const VOCABULARY_STORAGE_KEY = "meetingbro.vocabulary";
+const AUDIO_DEVICE_KEY = "meetingbro.audioDevice";
+const LOOPBACK_DEVICE_KEY = "meetingbro.loopbackDevice";
 const PREVIEW_HANDOFF_TOLERANCE_SECONDS = 0.35;
 const FORMAL_SEGMENT_STAGGER_MS = 75;
 const FORMAL_CELL_STAGGER_MS = 55;
@@ -247,11 +254,19 @@ function SummaryPanel({ title, subtitle, snapshot, history, sessionStartedAt, ac
 
   const bodyRef = useRef<HTMLDivElement>(null);
   const autoFollowRef = useRef(true);
+  const [expanded, setExpanded] = useState(false);
   useEffect(() => {
     if (autoFollowRef.current && bodyRef.current) {
       bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
     }
   }, [displayedHistory.length, latestSnapshot?.id]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setExpanded(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
 
   const onCopy = async () => {
     if (!latestSnapshot) return;
@@ -259,10 +274,7 @@ function SummaryPanel({ title, subtitle, snapshot, history, sessionStartedAt, ac
   };
   const onExpand = () => {
     if (!latestSnapshot) return;
-    const historyText = history
-      .map((item, idx) => `#${idx + 1}  ${formatApproxClockRange(sessionStartedAt, item.time_start, item.time_end)}\n${item.content}`)
-      .join("\n\n");
-    alert(`${title} — ${range}\n${relativeRange}\n\n${historyText}`);
+    setExpanded(true);
   };
   const onSave = async () => {
     if (!latestSnapshot) return;
@@ -315,6 +327,33 @@ function SummaryPanel({ title, subtitle, snapshot, history, sessionStartedAt, ac
     </footer>
   );
 
+  const modalJSX = expanded ? (
+    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={`${title} history`} onClick={() => setExpanded(false)}>
+      <div className="modal modal--summary" onClick={(e) => e.stopPropagation()}>
+        <div className="modal__header">
+          <h2>{title} <span className="modal__range">{range}</span></h2>
+          <button type="button" className="modal__close" onClick={() => setExpanded(false)} aria-label="Close">×</button>
+        </div>
+        <div className="modal__body summary-history">
+          {displayedHistory.length === 0 ? (
+            "No snapshots yet."
+          ) : (
+            displayedHistory.map((item, idx) => (
+              <article key={item.id} className="summary-history-item">
+                <div className="summary-history-meta">
+                  <span>#{idx + 1}</span>
+                  <span>{formatApproxClockRange(sessionStartedAt, item.time_start, item.time_end)}</span>
+                  <span>{formatRange(item.time_start, item.time_end)}</span>
+                </div>
+                <div>{item.content}</div>
+              </article>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   if (compact) {
     return (
       <div className="workspace-tab-panel">
@@ -324,6 +363,7 @@ function SummaryPanel({ title, subtitle, snapshot, history, sessionStartedAt, ac
         </div>
         {bodyJSX}
         {footerJSX}
+        {modalJSX}
       </div>
     );
   }
@@ -340,6 +380,7 @@ function SummaryPanel({ title, subtitle, snapshot, history, sessionStartedAt, ac
       </header>
       {bodyJSX}
       {footerJSX}
+      {modalJSX}
     </section>
   );
 }
@@ -363,11 +404,59 @@ export default function App() {
   const [bilingualExport, setBilingualExport] = useState(false);
   const [restartPromptOpen, setRestartPromptOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [diagnosticsMode, setDiagnosticsMode] = useState<"simple" | "advanced">(
+    () => (window.localStorage.getItem("meetingbro.diagnosticsMode") === "advanced" ? "advanced" : "simple"),
+  );
   const [computeActivityHold, setComputeActivityHold] = useState({ cpu: false, gpu: false });
   const [vocabularyOpen, setVocabularyOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"summary" | "clean" | "board" | "notes">("summary");
-  const { connected, state, meetingId, sessionStartedAt, elapsedSeconds, sessionStats, segments, previewSegment, previewSegments, isExperimentalPreview, previewDisplayText, previewIsStreaming, departingPreviewSegments, latestByType, historyByType, notes, lastError, saveNote, saveBookmark, applyVocabulary, exportMeeting, requestSummary, pauseSession, resumeSession, stopSession } =
-    useSessionSocket({ enabled: sessionEnabled, source, speechLanguage, summaryLanguage, subtitleLanguage, runtimeProfile });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [audioDevice, setAudioDevice] = useState("");
+  const [loopbackDevice, setLoopbackDevice] = useState("");
+  const [audioDevices, setAudioDevices] = useState<AudioDevices | null>(null);
+  const { connected, state, meetingId, sessionStartedAt, elapsedSeconds, sessionStats, segments, previewSegment, previewSegments, isExperimentalPreview, previewDisplayText, previewIsStreaming, departingPreviewSegments, latestByType, historyByType, notes, lastError, lastErrorCode, saveNote, saveBookmark, applyVocabulary, exportMeeting, requestSummary, pauseSession, resumeSession, stopSession } =
+    useSessionSocket({ enabled: sessionEnabled, source, speechLanguage, summaryLanguage, subtitleLanguage, runtimeProfile, audioDevice, loopbackDevice });
+
+  const backend = useBackendStatus();
+
+  // Load persisted device choices once, and fetch the device list when the
+  // backend becomes ready.
+  useEffect(() => {
+    setAudioDevice(window.localStorage.getItem(AUDIO_DEVICE_KEY) ?? "");
+    setLoopbackDevice(window.localStorage.getItem(LOOPBACK_DEVICE_KEY) ?? "");
+  }, []);
+  useEffect(() => {
+    if (!backend.isReady) return;
+    fetchAudioDevices().then(setAudioDevices).catch(() => setAudioDevices(null));
+  }, [backend.isReady]);
+  // First run: open Settings once so a new user lands on configuration instead
+  // of guessing. Marking firstRunComplete touches no startup keys, so it won't
+  // restart the backend.
+  useEffect(() => {
+    const bridge = window.meetingbro;
+    if (!bridge?.getSettings || !backend.isReady) return;
+    bridge.getSettings().then((s) => {
+      if (!s.firstRunComplete) {
+        setSettingsOpen(true);
+        bridge.saveSettings?.({ firstRunComplete: true }).catch(() => {});
+      }
+    }).catch(() => {});
+  }, [backend.isReady]);
+  useEffect(() => {
+    window.localStorage.setItem(AUDIO_DEVICE_KEY, audioDevice);
+  }, [audioDevice]);
+  useEffect(() => {
+    window.localStorage.setItem(LOOPBACK_DEVICE_KEY, loopbackDevice);
+  }, [loopbackDevice]);
+  useEffect(() => {
+    window.localStorage.setItem("meetingbro.diagnosticsMode", diagnosticsMode);
+  }, [diagnosticsMode]);
+
+  // Tell the Electron supervisor when a session is live so it won't restart the
+  // backend (e.g. after a settings change) mid-recording.
+  useEffect(() => {
+    window.meetingbro?.setSessionActive?.(sessionEnabled);
+  }, [sessionEnabled]);
 
   const rolling = latestByType.rolling_summary;
   const refined = latestByType.refined_transcript;
@@ -1039,6 +1128,16 @@ export default function App() {
 
   return (
     <div className="app">
+      {!backend.isReady && (
+        <BackendGate
+          state={backend.state}
+          detail={backend.detail}
+          logTail={backend.logTail}
+          onRetry={backend.retry}
+          onOpenLog={backend.openLog}
+        />
+      )}
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} sessionActive={sessionEnabled} />
       <header className="app-header">
         <div className="brand-block">
           <div className="brand-row">
@@ -1064,6 +1163,24 @@ export default function App() {
                 <option value="mixed">System + Mic</option>
               </select>
             </label>
+            {(source === "mic" || source === "mixed") && audioDevices && audioDevices.mics.length > 0 && (
+              <label className="control-pill">
+                <span>Mic device</span>
+                <select value={audioDevice} onChange={(e) => setAudioDevice(e.target.value)}>
+                  <option value="">Default</option>
+                  {audioDevices.mics.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </label>
+            )}
+            {(source === "loopback" || source === "system") && audioDevices && audioDevices.loopbacks.length > 0 && (
+              <label className="control-pill">
+                <span>Output device</span>
+                <select value={loopbackDevice} onChange={(e) => setLoopbackDevice(e.target.value)}>
+                  <option value="">Default</option>
+                  {audioDevices.loopbacks.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </label>
+            )}
             <label className="control-pill">
               <span>Mode</span>
               <select value={runtimeProfile} onChange={(e) => handleRuntimeProfileChange(e.target.value)}>
@@ -1098,10 +1215,13 @@ export default function App() {
                 <option value="de">Deutsch</option>
               </select>
             </label>
+            <button type="button" className="settings-gear" onClick={() => setSettingsOpen(true)} title="Settings" aria-label="Settings">
+              ⚙
+            </button>
           </div>
           <div className="session-controls" aria-label="Session actions">
             {!sessionEnabled ? (
-              <button className="start-btn" onClick={handleStartSession}>Start</button>
+              <button className="start-btn" onClick={handleStartSession} disabled={!backend.isReady}>Start</button>
             ) : (
               <>
                 {state === "paused" ? (
@@ -1130,7 +1250,16 @@ export default function App() {
         </div>
       </header>
 
-      {lastError && !isSystemHealthOnlyMessage(lastError) && <div className="error">{lastError}</div>}
+      {lastError && !isSystemHealthOnlyMessage(lastError) && (
+        lastErrorCode === "llm_unavailable" || lastErrorCode === "translation_unavailable" ? (
+          <div className="error error--actionable">
+            <span>{lastError}</span>
+            <button type="button" className="settings-btn" onClick={() => setSettingsOpen(true)}>Open Settings</button>
+          </div>
+        ) : (
+          <div className="error">{lastError}</div>
+        )
+      )}
 
       <section className={`startup-settings vocabulary-dock${vocabularyOpen ? " open" : ""}`} aria-label="Names and terms settings">
         <button
@@ -1614,7 +1743,15 @@ export default function App() {
                     </div>
                   ))}
                 </div>
+                <button
+                  type="button"
+                  className="diagnostics-mode-toggle"
+                  onClick={() => setDiagnosticsMode((m) => (m === "simple" ? "advanced" : "simple"))}
+                >
+                  {diagnosticsMode === "simple" ? "Show advanced details" : "Hide advanced details"}
+                </button>
               </div>
+              {diagnosticsMode === "advanced" && (<>
               <div className="diagnostic-card">
                 <span className="diagnostic-label">Active Source</span>
                 <strong className="diagnostic-value">{formatSourceLabel(activeSource)}</strong>
@@ -1799,6 +1936,7 @@ export default function App() {
                     : "no recent slow-ASR flush"}
                 </span>
               </div>
+              </>)}
             </div>
           </div>
         )}

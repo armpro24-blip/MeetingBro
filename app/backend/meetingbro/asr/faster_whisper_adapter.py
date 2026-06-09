@@ -82,6 +82,15 @@ class FasterWhisperAdapter(ASRAdapter):
                 chain.append(item)
         return chain
 
+    def ensure_loaded(self) -> None:
+        """Eagerly materialize the model.
+
+        Used by the backend startup warm-up so the (potentially large) model
+        download/load happens before the first session instead of blocking the
+        first ``transcribe`` call. Safe to call from a worker thread.
+        """
+        self._ensure_model()
+
     def _ensure_model(self):
         if self._model is None:
             from faster_whisper import WhisperModel

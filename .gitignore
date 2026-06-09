@@ -6,6 +6,10 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
+# Python virtual environments
+.venv/
+**/.venv/
+
 # Frontend dependencies/build artifacts
 app/frontend/node_modules/
 app/frontend/dist/

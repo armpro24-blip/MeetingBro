@@ -56,15 +56,7 @@ function mergePreviewStack(stack: TranscriptSegment[], nextPreview: TranscriptSe
   return [...withoutCoveredDuplicates, nextPreview].slice(-MAX_PREVIEW_STACK);
 }
 
-declare global {
-  interface Window {
-    meetingbro?: {
-      backendHttp: string;
-      backendWs: string;
-      selectExportDirectory?: (suggestedName?: string) => Promise<string | null>;
-    };
-  }
-}
+// The `window.meetingbro` bridge type lives in ../meetingbro-bridge.d.ts.
 
 export interface SaveNoteInput {
   content: string;
@@ -90,6 +82,8 @@ export interface SessionOptions {
   speechLanguage?: string;   // "auto" | "en" | "zh" | "de"
   subtitleLanguage?: string; // "off" | "en" | "zh" | "de"
   runtimeProfile?: string;   // "balanced" | "performance" | "summary_only"
+  audioDevice?: string;      // sounddevice input index, "" = default
+  loopbackDevice?: string;   // system output (speaker) name, "" = default
 }
 
 export interface SessionView {
@@ -110,6 +104,7 @@ export interface SessionView {
   historyByType: Partial<Record<SummaryType, SummarySnapshot[]>>;
   notes: Note[];
   lastError: string | null;
+  lastErrorCode: string | null;
   saveNote: (input: SaveNoteInput) => Promise<void>;
   saveBookmark: (label?: string) => Promise<void>;
   applyVocabulary: (value: string) => void;
@@ -135,6 +130,7 @@ export function useSessionSocket(options: SessionOptions = {}): SessionView {
   const [historyByType, setHistoryByType] = useState<SessionView["historyByType"]>({});
   const [notes, setNotes] = useState<Note[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [lastErrorCode, setLastErrorCode] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const previewTimerRef = useRef<number | null>(null);
   const previewHoldTimerRef = useRef<number | null>(null);
@@ -159,6 +155,8 @@ export function useSessionSocket(options: SessionOptions = {}): SessionView {
   const speechLanguage = options.speechLanguage ?? "auto";
   const subtitleLanguage = options.subtitleLanguage ?? "off";
   const runtimeProfile = options.runtimeProfile ?? "balanced";
+  const audioDevice = options.audioDevice ?? "";
+  const loopbackDevice = options.loopbackDevice ?? "";
   const effectiveSubtitleLanguage = runtimeProfile === "summary_only" ? "off" : subtitleLanguage;
 
   useEffect(() => {
@@ -440,6 +438,7 @@ export function useSessionSocket(options: SessionOptions = {}): SessionView {
     }
 
     setLastError(null);
+    setLastErrorCode(null);
     setSegments([]);
     setElapsedSeconds(0);
     setSessionStats(null);
@@ -460,6 +459,8 @@ export function useSessionSocket(options: SessionOptions = {}): SessionView {
     const base = window.meetingbro?.backendWs ?? "ws://127.0.0.1:8765";
     const params = new URLSearchParams({ source, summary_language: summaryLanguage, runtime_profile: runtimeProfile });
     if (speechLanguage !== "auto") params.set("forced_language", speechLanguage);
+    if (audioDevice) params.set("audio_device", audioDevice);
+    if (loopbackDevice) params.set("loopback_device", loopbackDevice);
     const vocabulary = window.localStorage.getItem(VOCABULARY_STORAGE_KEY)?.trim();
     if (vocabulary) params.set("vocabulary_hint", vocabulary);
     const url = `${base}/ws/session?${params.toString()}`;
@@ -555,6 +556,7 @@ export function useSessionSocket(options: SessionOptions = {}): SessionView {
             break;
           case "error":
             setLastError(msg.payload.message);
+            setLastErrorCode(msg.payload.code);
             break;
         }
       } catch (e) {
@@ -585,10 +587,12 @@ export function useSessionSocket(options: SessionOptions = {}): SessionView {
           forced_language: speechLanguage,
           subtitle_language: effectiveSubtitleLanguage,
           runtime_profile: runtimeProfile,
+          audio_device: audioDevice,
+          loopback_device: loopbackDevice,
         },
       }),
     );
-  }, [connected, effectiveSubtitleLanguage, enabled, source, speechLanguage, summaryLanguage, runtimeProfile]);
+  }, [connected, effectiveSubtitleLanguage, enabled, source, speechLanguage, summaryLanguage, runtimeProfile, audioDevice, loopbackDevice]);
 
   const stopSession = useCallback(() => {
     const ws = wsRef.current;
@@ -714,6 +718,7 @@ export function useSessionSocket(options: SessionOptions = {}): SessionView {
     historyByType,
     notes,
     lastError,
+    lastErrorCode,
     saveNote,
     saveBookmark,
     applyVocabulary,

@@ -27,6 +27,8 @@ class MixedAudioSource(AudioSource):
         max_microphone_boost: float = 1.8,
         microphone_activity_floor: float = 0.008,
         balance_smoothing: float = 0.35,
+        microphone_device: "int | str | None" = None,
+        speaker_name: "str | None" = None,
     ) -> None:
         self._sample_rate = sample_rate
         self._chunk_seconds = chunk_seconds
@@ -37,8 +39,8 @@ class MixedAudioSource(AudioSource):
         self._microphone_activity_floor = max(1e-5, microphone_activity_floor)
         self._balance_smoothing = min(1.0, max(0.0, balance_smoothing))
         self._smoothed_microphone_boost = 1.0
-        self._mic = MicrophoneSource(sample_rate=sample_rate, chunk_seconds=chunk_seconds)
-        self._loopback = SystemAudioLoopbackSource(sample_rate=sample_rate, chunk_seconds=chunk_seconds)
+        self._mic = MicrophoneSource(sample_rate=sample_rate, chunk_seconds=chunk_seconds, device=microphone_device)
+        self._loopback = SystemAudioLoopbackSource(sample_rate=sample_rate, chunk_seconds=chunk_seconds, speaker_name=speaker_name)
 
     @property
     def sample_rate(self) -> int:

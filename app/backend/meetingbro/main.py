@@ -13,13 +13,15 @@ from typing import Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from .asr.base import ASRAdapter
 from .asr.faster_whisper_adapter import FasterWhisperAdapter
 from .audio import AudioSource, MicrophoneSource, MixedAudioSource, SystemAudioLoopbackSource, WavFileSource
+from .audio.devices import enumerate_audio_devices
 from .exporter import export_meeting
 from .hardware import HardwareProfile, detect_hardware_profile
-from .llm.openai_compatible import _load_dotenv_if_present
+from .llm.openai_compatible import OpenAICompatibleClient, OpenAICompatibleConfig, _load_dotenv_if_present
 from .schemas import (
     CreateNoteRequest,
     ErrorPayload,
@@ -443,10 +445,18 @@ async def lifespan(app: FastAPI):
     app.state.hardware_profile = hardware
     app.state.asr = asr
     app.state.formal_asr_device = whisper_device
+    app.state.whisper_size = whisper_size
+    app.state.whisper_compute_type = whisper_compute_type
     app.state.preview_asr = preview_asr
     app.state.preview_asr_backend_name = _preview_asr_backend_name
     app.state.preview_asr_device = _preview_asr_device
     app.state.preview_asr_build_lock = asyncio.Lock()
+    # Readiness state surfaced via /health so the desktop app can show a
+    # "preparing speech model" screen instead of a hung UI on first run (the
+    # Whisper model downloads/loads lazily and can take minutes the first time).
+    app.state.ready = False
+    app.state.ready_phase = "loading_model"
+    app.state.ready_detail = None
     if preview_asr is not None:
         _maybe_start_preview_prewarm(
             app,
@@ -511,9 +521,29 @@ async def lifespan(app: FastAPI):
         _env_int("MEETINGBRO_LIVE_TRANSLATION_BACKFILL_LIMIT", 20),
         _env_int("MEETINGBRO_LIVE_TRANSLATION_MAX_PENDING", 12),
     )
+    async def _warm_up_formal_asr() -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, asr.ensure_loaded)
+        except Exception as exc:  # noqa: BLE001 - surface any load/download failure
+            app.state.ready_phase = "error"
+            app.state.ready_detail = str(exc)
+            logger.warning("formal ASR warm-up failed: %s", exc)
+        else:
+            app.state.ready = True
+            app.state.ready_phase = "ready"
+            app.state.ready_detail = None
+            logger.info("formal ASR ready (model=%s device=%s)", whisper_size, whisper_device)
+
+    warm_up_task = asyncio.create_task(_warm_up_formal_asr())
     try:
         yield
     finally:
+        warm_up_task.cancel()
+        try:
+            await warm_up_task
+        except (asyncio.CancelledError, Exception):
+            pass
         storage.close()
         logger.info("MeetingBro backend stopping")
 
@@ -530,7 +560,89 @@ app.add_middleware(
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "version": "0.1.0"}
+    # ``ready`` becomes true once the formal ASR model is materialized. ``phase``
+    # is one of: loading_model | ready | error. The desktop supervisor keys its
+    # startup gate off these fields (process-alive + ready), never a fixed timeout.
+    return {
+        "status": "ok",
+        "version": "0.1.0",
+        "ready": bool(getattr(app.state, "ready", False)),
+        "phase": getattr(app.state, "ready_phase", "loading_model"),
+        "detail": getattr(app.state, "ready_detail", None),
+    }
+
+
+def _mask_secret(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    tail = value[-4:] if len(value) >= 4 else value
+    return f"••••{tail}"
+
+
+@app.get("/audio/devices")
+async def audio_devices() -> dict:
+    # Read-only enumeration for the in-app device picker. Safe to call anytime.
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, enumerate_audio_devices)
+
+
+@app.get("/config")
+async def get_config() -> dict:
+    # Effective startup config + hardware recommendations. Never returns the LLM
+    # key value — only whether one is configured and a masked tail.
+    hardware = getattr(app.state, "hardware_profile", None)
+    llm_key = os.environ.get("MEETINGBRO_LLM_API_KEY") or os.environ.get("LONGCAT_API_KEY")
+    return {
+        "whisper_size": getattr(app.state, "whisper_size", "auto"),
+        "whisper_device": getattr(app.state, "formal_asr_device", "cpu"),
+        "whisper_compute_type": getattr(app.state, "whisper_compute_type", "auto"),
+        "preview_backend": getattr(app.state, "preview_asr_backend_name", "shared"),
+        "port": _env_int("MEETINGBRO_PORT", 8765),
+        "cuda_available": bool(getattr(hardware, "ctranslate2_cuda_available", False)),
+        "llm_configured": bool(llm_key),
+        "llm_key_masked": _mask_secret(llm_key),
+        "llm_model": os.environ.get("MEETINGBRO_LLM_MODEL"),
+        "llm_base_url": os.environ.get("MEETINGBRO_LLM_BASE_URL"),
+        "hardware": {
+            "label": getattr(hardware, "label", "unknown"),
+            "summary": getattr(hardware, "summary", None),
+            "recommended_whisper_size": getattr(hardware, "recommended_whisper_size", "small"),
+            "recommended_whisper_device": getattr(hardware, "recommended_whisper_device", "cpu"),
+            "recommended_runtime_profile": getattr(hardware, "recommended_runtime_profile", DEFAULT_RUNTIME_PROFILE),
+        },
+    }
+
+
+class TestLlmRequest(BaseModel):
+    api_key: str
+    base_url: Optional[str] = None
+    model: Optional[str] = None
+
+
+@app.post("/config/test-llm")
+async def test_llm(req: TestLlmRequest) -> dict:
+    # Validate credentials with one tiny chat call. Does not touch global state
+    # and never restarts the backend.
+    api_key = (req.api_key or "").strip()
+    if not api_key:
+        return {"ok": False, "error": "API key is required."}
+    base_url = (req.base_url or "https://api.openai.com/v1").strip().rstrip("/")
+    model = (req.model or "gpt-4o-mini").strip()
+    client = OpenAICompatibleClient(
+        OpenAICompatibleConfig(api_key=api_key, base_url=base_url, model=model, timeout_seconds=20.0)
+    )
+
+    loop = asyncio.get_running_loop()
+    start = datetime.now(timezone.utc)
+    try:
+        await loop.run_in_executor(
+            None,
+            lambda: client.chat(system="You are a connectivity check.", user="Reply with OK.", max_tokens=5),
+        )
+    except Exception as exc:  # noqa: BLE001 - surface the provider error to the UI
+        return {"ok": False, "model": model, "error": str(exc)}
+    latency_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
+    return {"ok": True, "model": model, "latency_ms": latency_ms}
 
 
 @app.post("/notes", response_model=Note)
@@ -599,7 +711,21 @@ async def export_meeting_endpoint(
         raise HTTPException(status_code=400, detail=f"export failed: {exc}")
 
 
-def _build_audio_source(source: str, *, chunk_seconds: Optional[float] = None) -> AudioSource:
+def _normalize_mic_device(device: Optional[str]) -> "int | str | None":
+    # sounddevice accepts an int index or a name string. The picker sends the
+    # query_devices index as a string, so coerce numeric ids back to int.
+    if device is None or device == "":
+        return None
+    return int(device) if str(device).isdigit() else device
+
+
+def _build_audio_source(
+    source: str,
+    *,
+    chunk_seconds: Optional[float] = None,
+    mic_device: Optional[str] = None,
+    speaker_name: Optional[str] = None,
+) -> AudioSource:
     """Build an AudioSource from a URI-like spec.
 
     - "mic" or empty: microphone capture (offline / in-person mode).
@@ -607,12 +733,17 @@ def _build_audio_source(source: str, *, chunk_seconds: Optional[float] = None) -
       macOS virtual loopback device, Linux PulseAudio/PipeWire monitor).
     - "mixed": microphone + system loopback mixed together.
     - "file:<path>": replay a WAV file for the E2E vertical-slice test.
+
+    ``mic_device`` / ``speaker_name`` optionally pin a specific input / output
+    device chosen in the UI; when omitted the platform default is used.
     """
     chunk_seconds = chunk_seconds if chunk_seconds is not None else _env_float("MEETINGBRO_CHUNK_SECONDS", 0.5)
+    mic = _normalize_mic_device(mic_device)
+    speaker = speaker_name or None
     if not source or source == "mic":
-        return MicrophoneSource(sample_rate=16_000, chunk_seconds=chunk_seconds)
+        return MicrophoneSource(sample_rate=16_000, chunk_seconds=chunk_seconds, device=mic)
     if source in ("loopback", "system"):
-        return SystemAudioLoopbackSource(sample_rate=16_000, chunk_seconds=chunk_seconds)
+        return SystemAudioLoopbackSource(sample_rate=16_000, chunk_seconds=chunk_seconds, speaker_name=speaker)
     if source == "mixed":
         return MixedAudioSource(
             sample_rate=16_000,
@@ -623,6 +754,8 @@ def _build_audio_source(source: str, *, chunk_seconds: Optional[float] = None) -
             max_microphone_boost=_env_float("MEETINGBRO_MIXED_MAX_MIC_BOOST", 1.8),
             microphone_activity_floor=_env_float("MEETINGBRO_MIXED_MIC_ACTIVITY_FLOOR", 0.008),
             balance_smoothing=_env_float("MEETINGBRO_MIXED_BALANCE_SMOOTHING", 0.35),
+            microphone_device=mic,
+            speaker_name=speaker,
         )
     if source.startswith("file:"):
         path = Path(source[len("file:") :]).expanduser().resolve()
@@ -650,6 +783,8 @@ async def session_ws(
     forced_language: Optional[str] = Query(default=None),
     vocabulary_hint: Optional[str] = Query(default=None),
     runtime_profile: Optional[str] = Query(default=None),
+    audio_device: Optional[str] = Query(default=None),
+    loopback_device: Optional[str] = Query(default=None),
 ) -> None:
     await ws.accept()
 
@@ -706,7 +841,12 @@ async def session_ws(
         )
 
     try:
-        audio_source = _build_audio_source(source, chunk_seconds=chunk_seconds)
+        audio_source = _build_audio_source(
+            source,
+            chunk_seconds=chunk_seconds,
+            mic_device=audio_device,
+            speaker_name=loopback_device,
+        )
     except Exception as exc:
         await ws.send_text(
             json.dumps(
@@ -950,11 +1090,20 @@ async def session_ws(
                 if next_vocabulary_hint is not None:
                     next_vocabulary_hint = str(next_vocabulary_hint).strip() or None
                 next_source = payload.get("source")
+                next_audio_device = payload.get("audio_device", audio_device)
+                next_loopback_device = payload.get("loopback_device", loopback_device)
                 profile_changed = next_profile != manager._cfg.runtime_profile
                 chunk_changed = abs(next_chunk_seconds - manager._cfg.audio_chunk_seconds) > 1e-6
-                if next_source and (next_source != source or (profile_changed and chunk_changed)):
+                device_changed = next_audio_device != audio_device or next_loopback_device != loopback_device
+                effective_source = next_source or source
+                if effective_source and (next_source != source or device_changed or (profile_changed and chunk_changed)):
                     try:
-                        next_audio_source = _build_audio_source(next_source, chunk_seconds=next_chunk_seconds)
+                        next_audio_source = _build_audio_source(
+                            effective_source,
+                            chunk_seconds=next_chunk_seconds,
+                            mic_device=next_audio_device,
+                            speaker_name=next_loopback_device,
+                        )
                     except Exception as exc:
                         await ws.send_text(
                             json.dumps(
@@ -967,10 +1116,12 @@ async def session_ws(
                     else:
                         manager.update_audio_source(
                             next_audio_source,
-                            source_name=next_source,
+                            source_name=effective_source,
                             chunk_seconds=next_chunk_seconds,
                         )
-                        source = next_source
+                        source = effective_source
+                        audio_device = next_audio_device
+                        loopback_device = next_loopback_device
                 manager.update_preview_runtime(
                     preview_asr=next_preview_asr,
                     preview_asr_backend_name=next_preview_backend_name,
@@ -1019,10 +1170,13 @@ async def session_ws(
 
 
 def run() -> None:
+    # Host/port are read from the environment so the Electron supervisor (or a
+    # manual launcher) can pick a free port without code changes. Defaults match
+    # the historical hardcoded values.
     uvicorn.run(
         "meetingbro.main:app",
-        host="127.0.0.1",
-        port=8765,
+        host=os.environ.get("MEETINGBRO_HOST", "127.0.0.1"),
+        port=_env_int("MEETINGBRO_PORT", 8765),
         reload=False,
         log_level="info",
     )

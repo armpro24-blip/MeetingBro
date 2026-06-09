@@ -107,6 +107,10 @@ class LLMSummarizer(Summarizer):
         self._anthropic_client = None
         self._openai_client = None
         self._compatible_client = OpenAICompatibleClient.from_env()
+        # Set to the most recent provider error when an LLM call fell back to the
+        # heuristic summarizer; None after a successful call. The SessionManager
+        # reads this to surface a visible (deduped) warning to the UI.
+        self.last_error: str | None = None
 
     def _ensure_client(self):
         if self._compatible_client is not None:
@@ -180,6 +184,7 @@ class LLMSummarizer(Summarizer):
             )
 
         try:
+            self.last_error = None
             if provider == "openai_compatible":
                 assert self._compatible_client is not None
                 return self._compatible_client.chat(
@@ -211,6 +216,7 @@ class LLMSummarizer(Summarizer):
                 return (resp.choices[0].message.content or "").strip()
         except Exception as exc:
             logger.warning("LLM summarization failed, falling back: %s", exc)
+            self.last_error = str(exc)
             return self._fallback.summarize(
                 segments,
                 kind=kind,
