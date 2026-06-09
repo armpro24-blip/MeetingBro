@@ -303,6 +303,9 @@ class SessionManager:
 
     def __init__(self, config: SessionConfig) -> None:
         self._cfg = config
+        # Dedupe key for surfacing LLM summary failures to the UI once per
+        # distinct error (reset when the LLM recovers).
+        self._last_summary_error_emitted: Optional[str] = None
         self._event_queue: asyncio.Queue[SessionEvent] = asyncio.Queue(maxsize=1024)
         self._state = _State(meeting_id=str(uuid.uuid4()))
         self._stopped = asyncio.Event()
@@ -3530,6 +3533,24 @@ class SessionManager:
             lines.append("Recent temporary preview hints in this window: none")
         return "\n".join(lines)
 
+    async def _maybe_emit_llm_error(self) -> None:
+        """Surface a silent LLM fallback to the UI, once per distinct error."""
+        last_error = getattr(self._cfg.summarizer, "last_error", None)
+        if last_error == self._last_summary_error_emitted:
+            return
+        self._last_summary_error_emitted = last_error
+        if last_error:
+            await self._emit(
+                "error",
+                ErrorPayload(
+                    code="llm_unavailable",
+                    message=(
+                        "AI summaries fell back to offline mode "
+                        f"(LLM error: {last_error}). Open Settings to check your API key."
+                    ),
+                ),
+            )
+
     async def _build_and_emit_snapshot(
         self,
         *,
@@ -3559,6 +3580,7 @@ class SessionManager:
                 vocabulary=self._cfg.vocabulary_hint,
             ),
         )
+        await self._maybe_emit_llm_error()
         if not content:
             return None
         snap = SummarySnapshot(

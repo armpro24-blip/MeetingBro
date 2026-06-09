@@ -94,6 +94,17 @@ chmod +x scripts/install.sh scripts/start.sh
 
 > **端口说明：** MeetingBro 后端默认监听 **8765** 端口。脚本允许通过 `BACKEND_PORT` 环境变量修改，前端代码也默认连接 8765。除非你同时修改了前端配置，否则建议保持默认不变。
 
+### 在应用内完成配置（无需终端、无需改 .env）
+
+桌面应用现在让非技术用户可以完全在界面里完成配置：
+
+- **自动管理后端** —— Electron 应用会自动启动（并在退出时关闭）Python 后端。在后端启动、以及首次运行下载语音模型期间，会显示"正在启动 / 正在准备语音模型"提示界面，而不是空白窗口；若启动失败，界面会显示错误并提供 **重试 / 查看日志**。（若已有后端在运行，应用会直接接入，不会重复启动。）
+- **应用内设置（顶栏 ⚙）** —— 设置 **LLM API Key / Base URL / 模型**(带 **测试连接** 按钮)、**Whisper 模型大小** 与 **计算设备**、以及快速字幕预览后端。设置按用户保存，并在无录制会话时自动重启后端生效,无需手改 `.env`。
+- **音频设备选择** —— 在采集选择器旁直接选择具体的麦克风或系统输出设备。
+- **清晰反馈** —— 当 AI 摘要静默降级(例如 API Key 被拒)时,会出现提示横幅并可一键跳转设置。
+
+> 应用内的后端启动器使用 `app/backend/.venv`,该环境**必须是 Python 3.12+**(请用 Python 3.12 运行 `scripts/install.ps1` / `install.sh` 创建)。若你的 `.venv` 是更旧的 Python 创建的,请重新创建;或者你也可以自行启动后端(例如在你自己的环境里),应用会自动接入。
+
 ### Linux 额外配置
 
 ```bash
@@ -284,6 +295,8 @@ MEETINGBRO_LLM_API_KEY=your_api_key_here
 MEETINGBRO_LLM_BASE_URL=https://api.openai.com/v1
 MEETINGBRO_LLM_MODEL=gpt-4o-mini
 ```
+
+> 最简单的方式是使用应用内 **设置（⚙）** 面板：粘贴 Key、选择服务商预设,然后点击 **测试连接**。也可以按上面方式写入 `.env`。
 
 支持的提供商包括 **OpenAI、Groq、Mistral AI、OpenRouter、Together AI**，以及完全本地的 **Ollama**（无需 Key，数据不出本机）。
 

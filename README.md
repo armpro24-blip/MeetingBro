@@ -94,6 +94,17 @@ Press `Ctrl+C` in the terminal to stop both services together.
 
 > **Port note:** MeetingBro backend listens on **8765** by default. The scripts let you override this with the `BACKEND_PORT` environment variable, but the frontend code also defaults to 8765. Unless you intentionally change the frontend configuration, leave `BACKEND_PORT` unchanged.
 
+### Configure inside the app (no terminal, no .env editing)
+
+The desktop app is designed so a non-technical user can set everything up from the UI:
+
+- **Automatic backend** — the Electron app starts (and stops) the Python backend for you. While it warms up — including the first-run speech-model download — you see a "Starting / Preparing the speech model" screen instead of a blank window. If the backend can't start, the screen shows the error with **Retry** and **View log**. (If a backend is already running, the app attaches to it instead of launching a second one.)
+- **In-app Settings (⚙ in the header)** — set your **LLM API key / base URL / model** (with a **Test connection** button), the **Whisper model size** and **compute device**, and the fast-captions preview backend. Settings are saved per-user and applied by restarting the backend automatically (only when no session is recording). No `.env` editing required.
+- **Audio device picker** — choose the exact microphone or system-output device next to the Capture selector.
+- **Clear feedback** — if AI summaries silently fall back (e.g. a rejected API key), a banner tells you and links straight to Settings.
+
+> The in-app backend launcher uses `app/backend/.venv`, which **must be a Python 3.12+ environment** (run `scripts/install.ps1` / `install.sh` with Python 3.12 to create it). If your `.venv` was created with an older Python, recreate it, or simply start the backend yourself (e.g. in your own env) and the app will attach to it.
+
 ### Linux setup
 
 ```bash
@@ -277,7 +288,7 @@ MeetingBro uses an **optional** cloud or local LLM for:
 
 **Without a key:** transcription still works. Summaries fall back to keyword extraction.
 
-**With a key:** set these three lines in your `.env` file:
+**With a key:** the easiest way is the in-app **Settings (⚙)** panel — paste your key, pick a provider preset, and click **Test connection**. Or set these three lines in your `.env` file:
 
 ```env
 MEETINGBRO_LLM_API_KEY=your_api_key_here
