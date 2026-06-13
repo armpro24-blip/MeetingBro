@@ -78,7 +78,9 @@ def detect_hardware_profile() -> HardwareProfile:
     if ct2_cuda:
         whisper_device = "cuda"
         whisper_compute = "float16"
-        whisper_size = "medium"
+        # large-v3-turbo decodes ~8x faster than large-v3 with near-SOTA accuracy;
+        # on a GPU it is the best speed/accuracy trade-off for realtime captions.
+        whisper_size = "large-v3-turbo"
         runtime_profile = "performance"
     else:
         whisper_device = "cpu"

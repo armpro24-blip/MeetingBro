@@ -14,7 +14,9 @@ const PROVIDER_PRESETS: Record<string, { baseUrl: string; model: string }> = {
   LongCat: { baseUrl: "https://api.longcat.chat/openai", model: "LongCat-Flash-Chat" },
 };
 
-const WHISPER_SIZES = ["auto", "tiny", "base", "small", "medium", "large-v2", "large-v3"];
+const WHISPER_SIZES = ["auto", "tiny", "base", "small", "medium", "large-v2", "large-v3", "large-v3-turbo"];
+// Large tiers are slow on CPU; surface a GPU-recommended hint when no CUDA is available.
+const GPU_RECOMMENDED_SIZES = new Set(["large-v2", "large-v3", "large-v3-turbo"]);
 
 export function SettingsModal({ open, onClose, sessionActive }: SettingsModalProps) {
   const bridge = typeof window !== "undefined" ? window.meetingbro : undefined;
@@ -77,6 +79,8 @@ export function SettingsModal({ open, onClose, sessionActive }: SettingsModalPro
   };
 
   const recommended = config?.hardware.recommended_whisper_size;
+  const cudaAvailable = Boolean(config?.cuda_available);
+  const showGpuSizeHint = Boolean(settings && GPU_RECOMMENDED_SIZES.has(settings.whisperSize) && !cudaAvailable);
 
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Settings" onClick={onClose}>
@@ -138,6 +142,13 @@ export function SettingsModal({ open, onClose, sessionActive }: SettingsModalPro
                   ))}
                 </select>
               </label>
+              {showGpuSizeHint && (
+                <p className="settings-hint">
+                  {settings?.whisperSize === "large-v3-turbo"
+                    ? "large-v3-turbo is fastest among the large models but still GPU-recommended — on CPU it runs well below real time."
+                    : "Large models are GPU-recommended — on CPU they run well below real time. Try small/medium, or large-v3-turbo if you need top accuracy."}
+                </p>
+              )}
               <label className="settings-field">
                 <span>Compute device</span>
                 <select value={settings.whisperDevice} onChange={(e) => update({ whisperDevice: e.target.value })}>
