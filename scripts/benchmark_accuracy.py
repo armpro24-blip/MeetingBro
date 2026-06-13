@@ -162,11 +162,14 @@ async def _run_accuracy(adapter: FasterWhisperAdapter, fixture: dict) -> _Accura
     ground_truth = fixture.get("ground_truth", "")
     path = ROOT / fixture["path"] if not Path(fixture["path"]).is_absolute() else Path(fixture["path"])
 
-    metric = asr_metrics.metric_for(language, ground_truth)
+    # `metric` may be overridden in the manifest (e.g. a zh-dominant code-switch
+    # clip wants cer); otherwise pick by language/script.
+    metric = fixture.get("metric") or asr_metrics.metric_for(language, ground_truth)
     if not path.exists():
         return _AccuracyResult(fid, language, metric, None, None, 0.0, 0, "", ground_truth, missing=True)
 
-    forced_language = language if language in _FORCED_LANGS else None
+    # `auto: true` forces auto-detect regardless of the (metric-only) language label.
+    forced_language = None if fixture.get("auto") else (language if language in _FORCED_LANGS else None)
     duration = _wav_duration_seconds(path)
     with tempfile.TemporaryDirectory() as tmp:
         storage = Storage(Path(tmp) / "bench.db")
@@ -195,7 +198,7 @@ async def _run_accuracy(adapter: FasterWhisperAdapter, fixture: dict) -> _Accura
         finally:
             storage.close()
 
-    _, error_rate = asr_metrics.score(ground_truth, transcript, language=language)
+    error_rate = asr_metrics.cer(ground_truth, transcript) if metric == "cer" else asr_metrics.wer(ground_truth, transcript)
     return _AccuracyResult(
         fixture_id=fid,
         language=language,

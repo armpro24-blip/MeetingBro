@@ -24,6 +24,8 @@ data/meetingbro.db
 data/meetingbro.db-*
 data/voice_test_*.wav
 data/benchmark_profile_*.json
+# Synthetic fixtures: regenerated from data/benchmark/synth_spec.json (committed).
+data/benchmark/synth/
 
 # Exports and local scratch output
 exports/*

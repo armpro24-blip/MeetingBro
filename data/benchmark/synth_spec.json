@@ -1,0 +1,52 @@
+{
+  "_comment": "Spec for scripts/gen_synth_fixtures.py. Synthesizes reproducible benchmark fixtures with Windows SAPI voices; the text here IS the ground truth. Audio is written to data/benchmark/synth/ (gitignored); regenerate with: python scripts/gen_synth_fixtures.py",
+  "gap_seconds": 0.4,
+  "voices": {
+    "zh": "Microsoft Huihui Desktop",
+    "en_m": "Microsoft David Desktop",
+    "en_f": "Microsoft Zira Desktop",
+    "de": "Microsoft Hedda Desktop"
+  },
+  "fixtures": [
+    {
+      "id": "zhen_codeswitch",
+      "language": "zh",
+      "auto": true,
+      "metric": "cer",
+      "note": "zh-dominant bilingual standup with embedded English tech terms (the real #3 case). Run in auto mode.",
+      "segments": [
+        { "voice": "zh", "text": "我们先同步一下这周的进度。" },
+        { "voice": "en_m", "text": "The backend deployment is already done." },
+        { "voice": "zh", "text": "好的,前端那边的接口联调通过了吗?" },
+        { "voice": "en_f", "text": "Yes, the integration test passed this morning." },
+        { "voice": "zh", "text": "那我们下午就可以上线了。" },
+        { "voice": "en_m", "text": "I will prepare the release notes and update the dashboard." },
+        { "voice": "zh", "text": "记得把数据库的备份也做一下。" },
+        { "voice": "en_f", "text": "Sure, I will run the backup before the deployment." }
+      ]
+    },
+    {
+      "id": "two_speaker_en",
+      "language": "en",
+      "note": "Two distinct English speakers alternating turns (for #4 diarization).",
+      "segments": [
+        { "voice": "en_m", "speaker": "A", "text": "Let's start with the quarterly numbers." },
+        { "voice": "en_f", "speaker": "B", "text": "Revenue grew about twelve percent last quarter." },
+        { "voice": "en_m", "speaker": "A", "text": "That is better than we forecast. What about churn?" },
+        { "voice": "en_f", "speaker": "B", "text": "Churn dropped to four percent after the new onboarding flow." },
+        { "voice": "en_m", "speaker": "A", "text": "Great. Let's lock the roadmap by Friday." },
+        { "voice": "en_f", "speaker": "B", "text": "I will send the updated timeline tonight." }
+      ]
+    },
+    {
+      "id": "propernoun_en",
+      "language": "en",
+      "note": "Proper nouns / jargon for vocabulary biasing (for #5).",
+      "keywords": ["Kubernetes", "Helsinki", "Grafana", "Aanya", "Bjorn"],
+      "segments": [
+        { "voice": "en_m", "text": "Aanya and Bjorn finished the Kubernetes migration for the Helsinki datacenter." },
+        { "voice": "en_f", "text": "The Grafana dashboards are now tracking the new latency metrics." }
+      ]
+    }
+  ]
+}

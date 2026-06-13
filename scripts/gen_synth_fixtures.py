@@ -1,0 +1,139 @@
+"""Generate reproducible benchmark fixtures with Windows SAPI voices.
+
+Reads data/benchmark/synth_spec.json (the committed source of truth — the text
+there IS the ground truth), renders each segment with the named SAPI voice via
+scripts/_sapi_render.ps1, concatenates segments with a short silence gap, and
+writes 16 kHz mono WAVs to data/benchmark/synth/ (gitignored) plus a
+benchmark_accuracy-compatible manifest.json next to them.
+
+Windows-only (uses System.Speech). Run from the repo root:
+
+    python scripts/gen_synth_fixtures.py
+
+Then score with:
+
+    python scripts/benchmark_accuracy.py --manifest data/benchmark/synth/manifest.json --skip-latency
+"""
+from __future__ import annotations
+
+import sys
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+import json
+import subprocess
+import tempfile
+from pathlib import Path
+
+import numpy as np
+import soundfile as sf
+
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = ROOT / "data" / "benchmark" / "synth_spec.json"
+OUT_DIR = ROOT / "data" / "benchmark" / "synth"
+RENDER_PS1 = ROOT / "scripts" / "_sapi_render.ps1"
+TARGET_SR = 16_000
+
+
+def _render_segment(voice: str, text: str, out_wav: Path) -> None:
+    """Render one segment to a 16 kHz mono WAV via SAPI (PowerShell helper)."""
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8", delete=False) as tf:
+        tf.write(text)
+        text_path = tf.name
+    try:
+        proc = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", str(RENDER_PS1),
+                "-Voice", voice,
+                "-TextFile", text_path,
+                "-Out", str(out_wav),
+            ],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0 or not out_wav.exists():
+            raise RuntimeError(f"SAPI render failed for voice={voice!r}: {proc.stderr.strip() or proc.stdout.strip()}")
+    finally:
+        Path(text_path).unlink(missing_ok=True)
+
+
+def _load_mono(path: Path) -> np.ndarray:
+    samples, sr = sf.read(str(path), dtype="float32", always_2d=False)
+    if getattr(samples, "ndim", 1) > 1:
+        samples = samples.mean(axis=1)
+    if sr != TARGET_SR:  # _sapi_render writes 16k, but stay safe.
+        import math
+        from scipy.signal import resample_poly
+        g = math.gcd(int(sr), TARGET_SR)
+        samples = resample_poly(samples, TARGET_SR // g, int(sr) // g).astype(np.float32)
+    return samples.astype(np.float32)
+
+
+def main() -> int:
+    if not SPEC.exists():
+        print(f"spec not found: {SPEC}", file=sys.stderr)
+        return 2
+    spec = json.loads(SPEC.read_text(encoding="utf-8"))
+    voices: dict[str, str] = spec["voices"]
+    gap = float(spec.get("gap_seconds", 0.4))
+    gap_samples = np.zeros(int(gap * TARGET_SR), dtype=np.float32)
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    manifest_fixtures = []
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        for fx in spec["fixtures"]:
+            fid = fx["id"]
+            pieces: list[np.ndarray] = []
+            speaker_turns = []
+            clock = 0.0
+            for idx, seg in enumerate(fx["segments"]):
+                voice = voices[seg["voice"]]
+                seg_wav = tmp_dir / f"{fid}_{idx}.wav"
+                _render_segment(voice, seg["text"], seg_wav)
+                audio = _load_mono(seg_wav)
+                if pieces:
+                    pieces.append(gap_samples)
+                    clock += gap
+                start = clock
+                pieces.append(audio)
+                clock += len(audio) / TARGET_SR
+                if "speaker" in seg:
+                    speaker_turns.append({"speaker": seg["speaker"], "start": round(start, 3), "end": round(clock, 3)})
+
+            full = np.concatenate(pieces) if pieces else np.zeros(0, dtype=np.float32)
+            out_wav = OUT_DIR / f"{fid}.wav"
+            sf.write(str(out_wav), full, TARGET_SR, subtype="PCM_16")
+
+            ground_truth = " ".join(seg["text"] for seg in fx["segments"])
+            entry = {
+                "id": fid,
+                "path": str(out_wav.relative_to(ROOT)).replace("\\", "/"),
+                "language": fx.get("language", ""),
+                "ground_truth": ground_truth,
+                "source": "synthetic (Windows SAPI)",
+            }
+            if fx.get("auto"):
+                entry["auto"] = True
+            if fx.get("metric"):
+                entry["metric"] = fx["metric"]
+            if fx.get("keywords"):
+                entry["keywords"] = fx["keywords"]
+            if speaker_turns:
+                entry["speaker_turns"] = speaker_turns
+            manifest_fixtures.append(entry)
+            print(f"  wrote {out_wav.relative_to(ROOT)}  ({len(full) / TARGET_SR:.1f}s, {len(fx['segments'])} segments)")
+
+    manifest_path = OUT_DIR / "manifest.json"
+    manifest_path.write_text(
+        json.dumps({"_comment": "Generated by scripts/gen_synth_fixtures.py from synth_spec.json. Do not edit by hand.", "fixtures": manifest_fixtures}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    print(f"manifest → {manifest_path.relative_to(ROOT)}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
