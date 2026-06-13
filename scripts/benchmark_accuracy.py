@@ -110,6 +110,9 @@ class _AccuracyResult:
     transcript: str
     ground_truth: str
     missing: bool = False
+    keywords_total: int = 0
+    keywords_hit: int = 0
+    vocab_applied: bool = False
 
 
 @dataclass
@@ -156,20 +159,43 @@ def _baseline_config(**overrides) -> dict:
     return cfg
 
 
-async def _run_accuracy(adapter: FasterWhisperAdapter, fixture: dict) -> _AccuracyResult:
+def _vocabulary_hint(fixture: dict) -> str | None:
+    """Vocabulary hint for a fixture as the UI would send it: a raw, comma-
+    separated term list. The backend (SessionManager._format_vocabulary_prompt)
+    is responsible for turning it into a glossary-style Whisper prompt, so this
+    exercises the real production formatting path."""
+    hint = fixture.get("vocabulary_hint")
+    if hint:
+        return hint
+    keywords = fixture.get("keywords")
+    if keywords:
+        return ", ".join(keywords)
+    return None
+
+
+def _keyword_recall(transcript: str, keywords: list[str]) -> tuple[int, int]:
+    folded = transcript.casefold()
+    hit = sum(1 for k in keywords if k.casefold() in folded)
+    return len(keywords), hit
+
+
+async def _run_accuracy(adapter: FasterWhisperAdapter, fixture: dict, *, apply_vocab: bool = True) -> _AccuracyResult:
     fid = fixture["id"]
     language = fixture.get("language", "")
     ground_truth = fixture.get("ground_truth", "")
+    keywords = fixture.get("keywords") or []
     path = ROOT / fixture["path"] if not Path(fixture["path"]).is_absolute() else Path(fixture["path"])
 
     # `metric` may be overridden in the manifest (e.g. a zh-dominant code-switch
     # clip wants cer); otherwise pick by language/script.
     metric = fixture.get("metric") or asr_metrics.metric_for(language, ground_truth)
     if not path.exists():
-        return _AccuracyResult(fid, language, metric, None, None, 0.0, 0, "", ground_truth, missing=True)
+        return _AccuracyResult(fid, language, metric, None, None, 0.0, 0, "", ground_truth, missing=True,
+                               keywords_total=len(keywords))
 
     # `auto: true` forces auto-detect regardless of the (metric-only) language label.
     forced_language = None if fixture.get("auto") else (language if language in _FORCED_LANGS else None)
+    vocab = _vocabulary_hint(fixture) if apply_vocab else None
     duration = _wav_duration_seconds(path)
     with tempfile.TemporaryDirectory() as tmp:
         storage = Storage(Path(tmp) / "bench.db")
@@ -180,6 +206,7 @@ async def _run_accuracy(adapter: FasterWhisperAdapter, fixture: dict) -> _Accura
                 asr=adapter,
                 storage=storage,
                 forced_language=forced_language,
+                vocabulary_hint=vocab,
                 # Offline accuracy replay floods the queue (chunks arrive as fast
                 # as the file reads). The production 8 s bound would drop the
                 # oldest audio and silently truncate the start of longer clips,
@@ -199,6 +226,7 @@ async def _run_accuracy(adapter: FasterWhisperAdapter, fixture: dict) -> _Accura
             storage.close()
 
     error_rate = asr_metrics.cer(ground_truth, transcript) if metric == "cer" else asr_metrics.wer(ground_truth, transcript)
+    kw_total, kw_hit = _keyword_recall(transcript, keywords)
     return _AccuracyResult(
         fixture_id=fid,
         language=language,
@@ -209,6 +237,9 @@ async def _run_accuracy(adapter: FasterWhisperAdapter, fixture: dict) -> _Accura
         segments=len(segments),
         transcript=transcript,
         ground_truth=ground_truth,
+        keywords_total=kw_total,
+        keywords_hit=kw_hit,
+        vocab_applied=vocab is not None,
     )
 
 
@@ -315,14 +346,16 @@ def _build_report(args, accuracy: list[_AccuracyResult], latency: _LatencyResult
 
     lines.append("## 准确率 (WER / CER)")
     lines.append("")
-    lines.append("| fixture | lang | metric | error_rate | asr_rtf | dur (s) | seg |")
-    lines.append("| --- | --- | --- | --- | --- | --- | --- |")
+    lines.append("| fixture | lang | metric | error_rate | kw recall | vocab | asr_rtf | dur (s) | seg |")
+    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for r in accuracy:
+        kw = f"{r.keywords_hit}/{r.keywords_total}" if r.keywords_total else "—"
+        vocab = "on" if r.vocab_applied else "off"
         if r.missing:
-            lines.append(f"| {r.fixture_id} | {r.language} | {r.metric} | _audio missing_ | — | — | — |")
+            lines.append(f"| {r.fixture_id} | {r.language} | {r.metric} | _audio missing_ | {kw} | {vocab} | — | — | — |")
         else:
             lines.append(
-                f"| {r.fixture_id} | {r.language} | {r.metric} | {_fmt(r.error_rate)} | "
+                f"| {r.fixture_id} | {r.language} | {r.metric} | {_fmt(r.error_rate)} | {kw} | {vocab} | "
                 f"{_fmt(r.asr_rtf, 2)} | {r.duration_s:.1f} | {r.segments} |"
             )
     lines.append("")
@@ -396,6 +429,9 @@ def _to_json(args, accuracy: list[_AccuracyResult], latency: _LatencyResult | No
                 "duration_s": round(r.duration_s, 2),
                 "segments": r.segments,
                 "missing": r.missing,
+                "keywords_total": r.keywords_total,
+                "keywords_hit": r.keywords_hit,
+                "vocab_applied": r.vocab_applied,
                 "transcript": r.transcript,
                 "ground_truth": r.ground_truth,
             }
@@ -427,6 +463,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--out", default=str(DEFAULT_OUT), help="Markdown report path.")
     p.add_argument("--json-out", default=None, help="Optional JSON report path (defaults beside --out).")
     p.add_argument("--label", default=None, help="Optional run label recorded in the report.")
+    p.add_argument("--ignore-vocab", action="store_true",
+                   help="Disable vocabulary_hint/keyword biasing (A/B baseline for #5).")
     return p.parse_args(argv[1:])
 
 
@@ -457,12 +495,14 @@ async def main(argv: list[str]) -> int:
     print(f"Accuracy pass: {len(fixtures)} fixtures…")
     accuracy: list[_AccuracyResult] = []
     for fx in fixtures:
-        r = await _run_accuracy(adapter, fx)
+        r = await _run_accuracy(adapter, fx, apply_vocab=not args.ignore_vocab)
         accuracy.append(r)
         if r.missing:
             print(f"  [skip] {r.fixture_id}: audio missing")
         else:
-            print(f"  {r.fixture_id} [{r.language}] {r.metric}={_fmt(r.error_rate)} asr_rtf={_fmt(r.asr_rtf, 2)}")
+            kw = f" kw={r.keywords_hit}/{r.keywords_total}" if r.keywords_total else ""
+            vocab = " vocab=on" if r.vocab_applied else ""
+            print(f"  {r.fixture_id} [{r.language}] {r.metric}={_fmt(r.error_rate)} asr_rtf={_fmt(r.asr_rtf, 2)}{kw}{vocab}")
 
     latency: _LatencyResult | None = None
     if not args.skip_latency:
