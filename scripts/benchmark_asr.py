@@ -26,7 +26,9 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app" / "backend"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
+import asr_metrics  # noqa: E402  (local module, scripts/ on path)
 from meetingbro.asr.faster_whisper_adapter import FasterWhisperAdapter  # noqa: E402
 from meetingbro.audio.capture import WavFileSource  # noqa: E402
 from meetingbro.llm.openai_compatible import _load_dotenv_if_present  # noqa: E402
@@ -200,6 +202,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Comma-separated named config profiles to compare. Default: full_current (alias of balanced)",
     )
     parser.add_argument("--keywords", nargs="*", default=[], help="Expected keywords for rough recall.")
+    parser.add_argument("--reference", default=None, help="Ground-truth transcript for WER/CER scoring.")
+    parser.add_argument("--reference-file", default=None, help="Path to a file holding the ground-truth transcript.")
     parser.add_argument("--json-out", default=None, help="Optional JSON report path.")
     parser.add_argument("--text-out-dir", default=None, help="Optional directory for transcript .txt files.")
     return parser.parse_args(argv[1:])
@@ -294,6 +298,13 @@ async def _run_one(path: Path, args: argparse.Namespace, *, profile_name: str, o
             transcript = "\n".join(seg.text for seg in segments)
             language_counts = Counter(seg.original_language for seg in segments)
             keyword = _keyword_recall(transcript, args.keywords)
+            reference = getattr(args, "reference", None)
+            if reference:
+                score_lang = None if args.language == "auto" else args.language
+                metric_name, error_rate = asr_metrics.score(reference, transcript, language=score_lang)
+                wer_cer = {"metric": metric_name, "error_rate": error_rate}
+            else:
+                wer_cer = {"metric": None, "error_rate": None}
             if args.text_out_dir:
                 out_dir = Path(args.text_out_dir)
                 out_dir.mkdir(parents=True, exist_ok=True)
@@ -310,6 +321,7 @@ async def _run_one(path: Path, args: argparse.Namespace, *, profile_name: str, o
                 "segments": len(segments),
                 "transcript_chars": len(transcript),
                 "languages": dict(language_counts),
+                "wer_cer": wer_cer,
                 "asr_last_realtime_factor": manager._state.asr_realtime_factor,
                 "asr_safeguard_events": manager._state.asr_safeguard_events,
                 "weak_rescue_attempts": manager._state.weak_rescue_attempts,
@@ -348,11 +360,18 @@ def _print_table(rows: list[dict[str, Any]]) -> None:
         "safe",
         "rescue",
         "kw",
+        "err",
     ]
     print("\t".join(headers))
     for row in rows:
         kw = row["keyword"]
         kw_text = "—" if kw["recall"] is None else f"{kw['matched']}/{kw['expected']}"
+        wer_cer = row.get("wer_cer", {})
+        err_text = (
+            "—"
+            if wer_cer.get("error_rate") is None
+            else f"{wer_cer['metric']} {wer_cer['error_rate']:.3f}"
+        )
         print(
             "\t".join(
                 [
@@ -369,6 +388,7 @@ def _print_table(rows: list[dict[str, Any]]) -> None:
                     str(row["asr_safeguard_events"]),
                     f"{row['weak_rescue_emitted']}/{row['weak_rescue_attempts']}",
                     kw_text,
+                    err_text,
                 ]
             )
         )
@@ -377,6 +397,11 @@ def _print_table(rows: list[dict[str, Any]]) -> None:
 async def main(argv: list[str]) -> int:
     _load_dotenv_if_present()
     args = _parse_args(argv)
+    if args.reference_file and not args.reference:
+        ref_path = Path(args.reference_file)
+        if not ref_path.is_absolute():
+            ref_path = ROOT / ref_path
+        args.reference = ref_path.read_text(encoding="utf-8").strip()
     wavs = _resolve_inputs(args.wav)
     if not wavs:
         print("No WAV files found.", file=sys.stderr)
