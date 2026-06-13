@@ -1,0 +1,54 @@
+{
+  "_comment": "Ground-truth fixtures for scripts/benchmark_accuracy.py. Ground truth is committed here (small text); the referenced audio under models/ is gitignored and downloaded with the Qwen3 preview model. The harness skips any fixture whose audio is missing and notes it in the report. To add your own committed fixtures, drop a wav under data/benchmark/ and add an entry with a relative path.",
+  "fixtures": [
+    {
+      "id": "zh_fast1",
+      "path": "models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/test_wavs/fast1.wav",
+      "language": "zh",
+      "ground_truth": "蹦出来之后，左手、右手接一个慢动作，右边再直接拉到这上面之后，直接拉到这个轮胎上，上边再接过去之后，然后上边再直接拉到这个位置了之后，右边再直接这个位置接倒过去的之后，再倒一下，然后右边再直接抓住这个上边了之后，直接从这边上边过去了之后，直接抓住这个树杈，然后这个位置直接倒到这个树杈",
+      "source": "sherpa-onnx Qwen3-ASR model bundle test_wavs"
+    },
+    {
+      "id": "zh_raokouling",
+      "path": "models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/test_wavs/raokouling.wav",
+      "language": "zh",
+      "ground_truth": "广西壮族自治区爱吃红鲤鱼与绿鲤鱼与驴的出租车司机，拉着苗族土家族自治州爱喝自制的刘奶奶榴莲牛奶的骨质疏松症患者，遇见别着喇叭的哑巴，打败咬死山前四十四棵紫色柿子树的四十四只石狮子之后，碰到年年恋牛娘的牛郎，念着灰黑灰化肥发黑会挥发，走出香港官方网站设置组，到广西壮族自治区首府南宁市民族医院就医。",
+      "source": "sherpa-onnx Qwen3-ASR model bundle test_wavs"
+    },
+    {
+      "id": "zh_qiqiu1",
+      "path": "models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/test_wavs/qiqiu1.wav",
+      "language": "zh",
+      "ground_truth": "黑的白的红的粉的紫的绿的蓝的灰的，你的我的他的她的大的小的圆的扁的，好的坏的美的丑的新的旧的，各种款式各种花式，让我选择。飞得高喽，越远越好，天都沦陷，他就死掉，说明多能高兴就好，喜欢就好，没大不了，越变越小，越来越小，快要死掉也很骄傲。你不想说就别再说，我不想听不想再听，就把一切誓言当作气球一般随它而去，我不在意不会在意，随它而去随它而去。气球飘进眼里，飘进风里，结束生命。气球飘进爱里，飘进心里，慢慢死去。",
+      "source": "sherpa-onnx Qwen3-ASR model bundle test_wavs"
+    },
+    {
+      "id": "en_f1_noise",
+      "path": "models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/test_wavs/f1_noise.wav",
+      "language": "en",
+      "ground_truth": "Okay, Charles. It looks like we have a problem with the radio. What happened? Yeah, someone spilled water on their machine. I uh, yeah. Charles, can you hear us? Mamma mia.",
+      "source": "sherpa-onnx Qwen3-ASR model bundle test_wavs"
+    },
+    {
+      "id": "en_rap1",
+      "path": "models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/test_wavs/rap1.wav",
+      "language": "en",
+      "ground_truth": "Sometimes I just feel like quitting. I still might. Why do I put up this fight? Why do I still write? Sometimes it's hard enough just dealing with real life. Sometimes I wanna jump a state and just kill mics. And so these people want my level of skills, like, but I'm still white. Sometimes I just hate life. Something ain't right. Hit the brake lights. Taste of the state's right. Drawing the blank line. It ain't my fault.",
+      "source": "sherpa-onnx Qwen3-ASR model bundle test_wavs"
+    },
+    {
+      "id": "de_de",
+      "path": "models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/test_wavs/de.wav",
+      "language": "de",
+      "ground_truth": "Raptorium Bergbau scheint profitierter als Monroe als Reaktion auf die wirtschaftlichen Ausfälle zu sein.",
+      "source": "sherpa-onnx Qwen3-ASR model bundle test_wavs"
+    },
+    {
+      "id": "mixed_codeswitch",
+      "path": "models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/test_wavs/codeswitch.wav",
+      "language": "mixed",
+      "ground_truth": "I'm alone, all by myself. Je suis tout seul. Sono tutto. Estoy solo.",
+      "source": "sherpa-onnx Qwen3-ASR model bundle test_wavs (en/fr/it/es code-switch)"
+    }
+  ]
+}
