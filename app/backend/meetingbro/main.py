@@ -49,6 +49,16 @@ DEFAULT_EXPORT_ROOT = PROJECT_ROOT / "exports"
 DEFAULT_DIARIZATION_MODEL = (
     PROJECT_ROOT / "models" / "speaker-embedding" / "3dspeaker_campplus_sv_zh-cn_16k-common.onnx"
 )
+DEFAULT_PREVIEW_QWEN_DIR = PROJECT_ROOT / "models" / "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"
+
+
+def _resolve_qwen_model_dir() -> Path:
+    """Resolve the Qwen3 preview model dir (env override or the bundled default)."""
+    env = os.environ.get("MEETINGBRO_PREVIEW_QWEN3_MODEL_DIR", "").strip()
+    if not env:
+        return DEFAULT_PREVIEW_QWEN_DIR
+    path = Path(env)
+    return path if path.is_absolute() else PROJECT_ROOT / path
 
 
 def _recommended_asr_executor_workers() -> int:
@@ -251,6 +261,17 @@ def _configured_preview_runtime(
 ) -> tuple[str, str]:
     preview_backend = os.environ.get("MEETINGBRO_PREVIEW_ASR_BACKEND", "").strip().lower()
     if preview_backend == "qwen3":
+        # Guard: the Qwen model is optional (~700 MB, not auto-downloaded). If it
+        # is missing, degrade to a shared (formal-model) preview instead of
+        # failing every preview decode — so enabling preview by default is safe.
+        model_dir = _resolve_qwen_model_dir()
+        if not model_dir.exists():
+            logger.warning(
+                "Qwen3 preview backend selected but model dir not found (%s); "
+                "using shared preview instead",
+                model_dir,
+            )
+            return "shared", formal_device
         return (
             "qwen3",
             _env_str_auto(
@@ -370,17 +391,9 @@ def _build_preview_asr(hardware: HardwareProfile | None = None) -> ASRAdapter | 
         # Lazy import so that a missing sherpa-onnx never affects normal startup.
         from .asr.qwen3_asr_adapter import Qwen3ASRAdapter
 
-        model_dir = os.environ.get("MEETINGBRO_PREVIEW_QWEN3_MODEL_DIR", "").strip()
-        if not model_dir:
-            raise RuntimeError(
-                "MEETINGBRO_PREVIEW_ASR_BACKEND=qwen3 requires "
-                "MEETINGBRO_PREVIEW_QWEN3_MODEL_DIR to be set."
-            )
         # Resolve relative paths against the project root so the backend can
-        # be started from any working directory.
-        model_dir_path = Path(model_dir)
-        if not model_dir_path.is_absolute():
-            model_dir_path = PROJECT_ROOT / model_dir_path
+        # be started from any working directory (env override or bundled default).
+        model_dir_path = _resolve_qwen_model_dir()
         return Qwen3ASRAdapter(
             model_dir=model_dir_path,
             num_threads=_env_int(
@@ -905,6 +918,13 @@ async def session_ws(
         await ws.close()
         return
 
+    # A live preview lane needs a dedicated preview model (qwen3 / faster_whisper).
+    # When none is available the backend resolves to "shared"; rather than run an
+    # untested shared-model preview, disable preview for this session so behaviour
+    # matches the stable formal-only path.
+    if session_preview_backend_name == "shared":
+        profile_settings["fast_preview_enabled"] = False
+
     # Speaker diarization is shared across sessions; reset its accumulated
     # speaker state so labels start fresh for this meeting.
     session_diarizer = getattr(app.state, "diarizer", None)
@@ -1142,6 +1162,10 @@ async def session_ws(
                             }
                         )
                     )
+                # No dedicated preview model → disable preview rather than run a
+                # shared-model preview (mirrors the session-start guard).
+                if next_preview_backend_name == "shared":
+                    next_profile_settings["fast_preview_enabled"] = False
                 next_vocabulary_hint = payload.get("vocabulary_hint", manager._cfg.vocabulary_hint)
                 if next_vocabulary_hint is not None:
                     next_vocabulary_hint = str(next_vocabulary_hint).strip() or None

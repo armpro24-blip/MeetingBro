@@ -144,6 +144,11 @@ class _LatencyResult:
     max: float
     segments: int
     asr_rtf: float | None
+    # Preview (Qwen) lane, populated only when --preview is used.
+    preview_p50: float | None = None
+    preview_p95: float | None = None
+    preview_segments: int = 0
+    preview_rtf: float | None = None
 
 
 def _wav_duration_seconds(path: Path) -> float:
@@ -181,6 +186,18 @@ def _baseline_config(**overrides) -> dict:
     )
     cfg.update(overrides)
     return cfg
+
+
+DEFAULT_QWEN_DIR = ROOT / "models" / "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"
+
+
+def _build_qwen_preview(model_dir: Path = DEFAULT_QWEN_DIR):
+    """Build the Qwen3 preview adapter for the --preview latency measurement."""
+    from meetingbro.asr.qwen3_asr_adapter import Qwen3ASRAdapter
+
+    if not model_dir.exists():
+        raise FileNotFoundError(f"Qwen3 preview model not found: {model_dir}")
+    return Qwen3ASRAdapter(model_dir=model_dir, num_threads=2, provider="cpu")
 
 
 def _vocabulary_hint(fixture: dict) -> str | None:
@@ -284,8 +301,17 @@ def _prepare_latency_wav(path: Path) -> tuple[Path, bool]:
     return Path(tmp.name), True
 
 
-async def _run_latency(adapter: FasterWhisperAdapter, wav: Path) -> _LatencyResult:
+async def _run_latency(adapter: FasterWhisperAdapter, wav: Path, *, preview_asr=None) -> _LatencyResult:
     prepared, is_temp = _prepare_latency_wav(wav)
+    cfg_overrides = dict(forced_language="en")
+    if preview_asr is not None:
+        # Enable the preview (Qwen) lane on a dedicated executor — this is what
+        # delivers sub-second captions. Overrides the formal-only baseline.
+        cfg_overrides.update(
+            fast_preview_enabled=True,
+            preview_asr=preview_asr,
+            preview_asr_backend_name="qwen3",
+        )
     try:
         with tempfile.TemporaryDirectory() as tmp:
             storage = Storage(Path(tmp) / "bench.db")
@@ -296,17 +322,21 @@ async def _run_latency(adapter: FasterWhisperAdapter, wav: Path) -> _LatencyResu
                 audio_source=source,
                 asr=adapter,
                 storage=storage,
-                forced_language="en",
-                **_baseline_config(),
+                **_baseline_config(**cfg_overrides),
             ))
             latencies: list[float] = []
+            preview_latencies: list[float] = []
             bench_start = time.monotonic()
 
             async def collect() -> None:
                 async for event in manager.events():
+                    base = source.first_chunk_wall or bench_start
                     if event.type == "transcript_segment":
-                        base = source.first_chunk_wall or bench_start
                         latencies.append(time.monotonic() - base - event.payload["end_time"])
+                    elif event.type == "transcript_preview":
+                        seg = event.payload.get("segment")
+                        if seg:
+                            preview_latencies.append(time.monotonic() - base - seg["end_time"])
 
             collector = asyncio.create_task(collect())
             try:
@@ -321,12 +351,24 @@ async def _run_latency(adapter: FasterWhisperAdapter, wav: Path) -> _LatencyResu
                 except asyncio.CancelledError:
                     pass
                 asr_rtf = manager._state.asr_realtime_factor
+                preview_rtf = manager._state.fast_preview_realtime_factor
                 storage.close()
 
-            p50 = statistics.median(latencies) if latencies else float("nan")
-            p95 = float(np.percentile(latencies, 95)) if latencies else float("nan")
+            def _stats(xs):
+                if not xs:
+                    return float("nan"), float("nan")
+                return statistics.median(xs), float(np.percentile(xs, 95))
+
+            p50, p95 = _stats(latencies)
             mx = max(latencies) if latencies else float("nan")
-            return _LatencyResult(str(wav.name), p50, p95, mx, len(latencies), asr_rtf)
+            pv_p50, pv_p95 = _stats(preview_latencies)
+            return _LatencyResult(
+                str(wav.name), p50, p95, mx, len(latencies), asr_rtf,
+                preview_p50=(None if not preview_latencies else pv_p50),
+                preview_p95=(None if not preview_latencies else pv_p95),
+                preview_segments=len(preview_latencies),
+                preview_rtf=preview_rtf,
+            )
     finally:
         if is_temp and prepared.exists():
             prepared.unlink(missing_ok=True)
@@ -405,12 +447,17 @@ def _build_report(args, accuracy: list[_AccuracyResult], latency: _LatencyResult
     else:
         lines.append(f"源文件: `{latency.wav}` (循环铺到 ≥{LATENCY_MIN_SECONDS:.0f}s),实时回放。延迟 = 音频结束 → 字幕发出。")
         lines.append("")
-        lines.append("| p50 (s) | p95 (s) | max (s) | segments | asr_rtf |")
-        lines.append("| --- | --- | --- | --- | --- |")
+        lines.append("| lane | p50 (s) | p95 (s) | max (s) | segments | rtf |")
+        lines.append("| --- | --- | --- | --- | --- | --- |")
         lines.append(
-            f"| {_fmt(latency.p50, 2)} | {_fmt(latency.p95, 2)} | {_fmt(latency.max, 2)} | "
+            f"| formal | {_fmt(latency.p50, 2)} | {_fmt(latency.p95, 2)} | {_fmt(latency.max, 2)} | "
             f"{latency.segments} | {_fmt(latency.asr_rtf, 2)} |"
         )
+        if latency.preview_segments:
+            lines.append(
+                f"| preview (Qwen) | {_fmt(latency.preview_p50, 2)} | {_fmt(latency.preview_p95, 2)} | — | "
+                f"{latency.preview_segments} | {_fmt(latency.preview_rtf, 2)} |"
+            )
     lines.append("")
     lines.append("## 结果解读 (重要)")
     lines.append("")
@@ -470,6 +517,10 @@ def _to_json(args, accuracy: list[_AccuracyResult], latency: _LatencyResult | No
                 "max_s": latency.max,
                 "segments": latency.segments,
                 "asr_rtf": latency.asr_rtf,
+                "preview_p50_s": latency.preview_p50,
+                "preview_p95_s": latency.preview_p95,
+                "preview_segments": latency.preview_segments,
+                "preview_rtf": latency.preview_rtf,
             }
         ),
     }
@@ -489,6 +540,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--label", default=None, help="Optional run label recorded in the report.")
     p.add_argument("--ignore-vocab", action="store_true",
                    help="Disable vocabulary_hint/keyword biasing (A/B baseline for #5).")
+    p.add_argument("--preview", action="store_true",
+                   help="Also run the latency pass with the Qwen preview lane enabled and report its latency.")
     return p.parse_args(argv[1:])
 
 
@@ -534,9 +587,16 @@ async def main(argv: list[str]) -> int:
         if not lat_wav.is_absolute():
             lat_wav = ROOT / lat_wav
         if lat_wav.exists():
-            print(f"Latency pass: {lat_wav.name} (realtime)…")
-            latency = await _run_latency(adapter, lat_wav)
-            print(f"  p50={_fmt(latency.p50, 2)}s p95={_fmt(latency.p95, 2)}s max={_fmt(latency.max, 2)}s")
+            preview_asr = None
+            if args.preview:
+                print("Building Qwen3 preview adapter…")
+                preview_asr = _build_qwen_preview()
+            print(f"Latency pass: {lat_wav.name} (realtime){' +preview' if args.preview else ''}…")
+            latency = await _run_latency(adapter, lat_wav, preview_asr=preview_asr)
+            print(f"  formal  p50={_fmt(latency.p50, 2)}s p95={_fmt(latency.p95, 2)}s")
+            if latency.preview_segments:
+                print(f"  preview p50={_fmt(latency.preview_p50, 2)}s p95={_fmt(latency.preview_p95, 2)}s "
+                      f"segs={latency.preview_segments} rtf={_fmt(latency.preview_rtf, 2)}")
         else:
             print(f"  [skip] latency wav not found: {lat_wav}")
 
