@@ -9,28 +9,28 @@
 - device: `cpu`  compute type: `int8`  beam size: `3`
 - runtime profile: `balanced`  (formal lane only, fast_preview disabled)
 - manifest: `data\benchmark\manifest.json`
-- label: baseline small/cpu/int8
+- label: baseline small/cpu/int8 (balanced profile)
 
 ## 准确率 (WER / CER)
 
-| fixture | lang | metric | error_rate | asr_rtf | dur (s) | seg |
-| --- | --- | --- | --- | --- | --- | --- |
-| zh_fast1 | zh | cer | 0.577 | 0.31 | 11.4 | 8 |
-| zh_raokouling | zh | cer | 0.643 | 0.36 | 20.8 | 5 |
-| zh_qiqiu1 | zh | cer | 0.806 | 0.00 | 51.0 | 6 |
-| en_f1_noise | en | wer | 0.226 | 1.11 | 19.0 | 6 |
-| en_rap1 | en | wer | 0.929 | 0.69 | 29.0 | 3 |
-| de_de | de | wer | 0.143 | 0.20 | 6.7 | 2 |
-| mixed_codeswitch | mixed | wer | 0.714 | 0.39 | 6.2 | 4 |
+| fixture | lang | metric | error_rate | kw recall | vocab | asr_rtf | dur (s) | seg |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| zh_fast1 | zh | cer | 0.500 | — | off | 0.47 | 11.4 | 7 |
+| zh_raokouling | zh | cer | 0.586 | — | off | 0.37 | 20.8 | 7 |
+| zh_qiqiu1 | zh | cer | 0.789 | — | off | 0.00 | 51.0 | 8 |
+| en_f1_noise | en | wer | 0.290 | — | off | 0.97 | 19.0 | 6 |
+| en_rap1 | en | wer | 0.952 | — | off | 0.76 | 29.0 | 1 |
+| de_de | de | wer | 0.000 | — | off | 0.22 | 6.7 | 2 |
+| mixed_codeswitch | mixed | wer | 0.786 | — | off | 0.49 | 6.2 | 4 |
 
 ### 按语言聚合
 
 | lang | metric | mean | n |
 | --- | --- | --- | --- |
-| de | wer | 0.143 | 1 |
-| en | wer | 0.577 | 2 |
-| mixed | wer | 0.714 | 1 |
-| zh | cer | 0.675 | 3 |
+| de | wer | 0.000 | 1 |
+| en | wer | 0.621 | 2 |
+| mixed | wer | 0.786 | 1 |
+| zh | cer | 0.625 | 3 |
 
 ## 端到端字幕延迟 (formal lane)
 
@@ -38,7 +38,7 @@
 
 | p50 (s) | p95 (s) | max (s) | segments | asr_rtf |
 | --- | --- | --- | --- | --- |
-| 5.42 | 8.74 | 9.05 | 13 | 0.37 |
+| 8.04 | 13.81 | 16.24 | 10 | 0.36 |
 
 ## 结果解读 (重要)
 

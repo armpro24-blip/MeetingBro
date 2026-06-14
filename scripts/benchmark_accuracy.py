@@ -48,6 +48,7 @@ import asr_metrics  # noqa: E402  (local module, scripts/ on path)
 from meetingbro.asr.faster_whisper_adapter import FasterWhisperAdapter  # noqa: E402
 from meetingbro.audio.capture import AudioSource, WavFileSource  # noqa: E402
 from meetingbro.session.manager import SessionConfig, SessionManager  # noqa: E402
+from meetingbro.session.profiles import RUNTIME_PROFILE_PRESETS  # noqa: E402
 from meetingbro.storage.db import Storage  # noqa: E402
 from meetingbro.summarization.base import Summarizer  # noqa: E402
 from meetingbro.translation.base import Translator  # noqa: E402
@@ -58,6 +59,26 @@ DEFAULT_LATENCY_WAV = DATA_DIR / "sample_en.wav"
 DEFAULT_OUT = ROOT / "docs" / "benchmarks" / "baseline-2026-06.md"
 LATENCY_MIN_SECONDS = 60.0
 TARGET_SR = 16_000
+# Measure the production default profile faithfully (its segmentation/latency
+# params differ from the bare SessionConfig dataclass defaults).
+RUNTIME_PROFILE = "balanced"
+
+
+def _profile_settings(profile_name: str = RUNTIME_PROFILE) -> tuple[dict, float]:
+    """Return (SessionConfig overrides, source chunk_seconds) for a runtime profile.
+
+    Mirrors how main.py applies a profile preset to SessionConfig, so the
+    benchmark exercises the real production behavior rather than the dataclass
+    defaults. ``chunk_seconds`` is split out (it maps to the audio source, not a
+    SessionConfig field) and ``fast_preview_enabled`` is dropped (forced off).
+    """
+    preset = dict(RUNTIME_PROFILE_PRESETS[profile_name])
+    chunk = float(preset.pop("chunk_seconds", 0.75))
+    preset.pop("fast_preview_enabled", None)
+    return preset, chunk
+
+
+PROFILE_CHUNK_SECONDS = _profile_settings()[1]
 
 # zh/en/de are the project's first-class forced-language targets; anything else
 # (e.g. "mixed") is replayed in auto-detect mode.
@@ -131,17 +152,20 @@ def _wav_duration_seconds(path: Path) -> float:
 
 
 def _baseline_config(**overrides) -> dict:
-    """Common SessionConfig kwargs for a deterministic formal-only baseline.
+    """Common SessionConfig kwargs for a deterministic, profile-faithful baseline.
 
-    SessionConfig's dataclass defaults already encode the balanced production
-    profile, so we only override the bits that make a benchmark deterministic:
-    no summaries, no live preview lane.
+    Applies the production runtime profile preset (so segmentation/latency params
+    match what users actually run), then forces the bits that make a benchmark
+    deterministic: no summaries, no live preview lane.
     """
-    cfg = dict(
+    preset, _ = _profile_settings()
+    cfg = dict(preset)  # production profile values (pre_vad_*, accumulation, etc.)
+    cfg.update(
         summarizer=_NoopSummarizer(),
         translator=_NoopTranslator(),
         summary_language="en",
-        runtime_profile="balanced",
+        runtime_profile=RUNTIME_PROFILE,
+        audio_chunk_seconds=PROFILE_CHUNK_SECONDS,
         # Disable the preview lane so the scored transcript is pure formal Whisper.
         fast_preview_enabled=False,
         preview_asr=None,
@@ -200,7 +224,7 @@ async def _run_accuracy(adapter: FasterWhisperAdapter, fixture: dict, *, apply_v
     with tempfile.TemporaryDirectory() as tmp:
         storage = Storage(Path(tmp) / "bench.db")
         try:
-            source = WavFileSource(path, sample_rate=TARGET_SR, chunk_seconds=0.5, realtime=False)
+            source = WavFileSource(path, sample_rate=TARGET_SR, chunk_seconds=PROFILE_CHUNK_SECONDS, realtime=False)
             manager = SessionManager(SessionConfig(
                 audio_source=source,
                 asr=adapter,
@@ -266,7 +290,7 @@ async def _run_latency(adapter: FasterWhisperAdapter, wav: Path) -> _LatencyResu
         with tempfile.TemporaryDirectory() as tmp:
             storage = Storage(Path(tmp) / "bench.db")
             source = _ArrivalProbeSource(
-                WavFileSource(prepared, sample_rate=TARGET_SR, chunk_seconds=0.5, realtime=True)
+                WavFileSource(prepared, sample_rate=TARGET_SR, chunk_seconds=PROFILE_CHUNK_SECONDS, realtime=True)
             )
             manager = SessionManager(SessionConfig(
                 audio_source=source,
