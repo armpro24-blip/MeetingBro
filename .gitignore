@@ -26,6 +26,8 @@ data/voice_test_*.wav
 data/benchmark_profile_*.json
 # Synthetic fixtures: regenerated from data/benchmark/synth_spec.json (committed).
 data/benchmark/synth/
+# Real audio fixtures (AMI excerpt): regenerated via scripts/fetch_ami_fixture.py
+data/benchmark/real/
 
 # Exports and local scratch output
 exports/*

@@ -113,16 +113,11 @@ class NeuralDiarizer(Diarizer):
         if name:
             return name
         if manager.num_speakers >= self._max_speakers:
-            # At the cap: pick the best existing match regardless of threshold.
-            best = ""
-            best_score = -1.0
-            for existing in manager.all_speakers():
-                sc = manager.verify(existing, embedding, threshold=-1.0)
-                # verify returns bool; use score() for the similarity value.
-                score = manager.score(existing, embedding) if hasattr(manager, "score") else 0.0
-                if score > best_score:
-                    best_score, best = score, existing
-            return best or f"Speaker {self._next_speaker_idx}"
+            # At the cap: force the best available match with a permissive search
+            # rather than registering yet another speaker.
+            best = manager.search(embedding, threshold=0.0)
+            if best:
+                return best
         name = f"Speaker {self._next_speaker_idx}"
         self._next_speaker_idx += 1
         manager.add(name, embedding)
