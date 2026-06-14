@@ -31,17 +31,21 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "data" / "benchmark" / "real"
 TARGET_SR = 16_000
 
+# "sdm" = single distant microphone (real single-channel room audio, matches
+# MeetingBro's capture); "ihm" = per-speaker headset mics (cleaner but summing
+# them is an artificial proxy).
+CONFIG = os.environ.get("AMI_CONFIG", "sdm")
 MEETING = "EN2002a"
 WIN_START = 300.0    # seconds into the meeting
 WIN_END = 420.0      # 120s excerpt
-SCAN_CAP = 4000      # max streamed examples to scan for in-window utterances
+SCAN_CAP = 6000      # max streamed examples to scan for in-window utterances
 
 
 def main() -> int:
     from datasets import load_dataset
 
-    print(f"Streaming AMI ihm test; collecting {MEETING} [{WIN_START:.0f}-{WIN_END:.0f}s]…")
-    ds = load_dataset("edinburghcstr/ami", "ihm", split="test", streaming=True, trust_remote_code=True)
+    print(f"Streaming AMI {CONFIG} test; collecting {MEETING} [{WIN_START:.0f}-{WIN_END:.0f}s]…")
+    ds = load_dataset("edinburghcstr/ami", CONFIG, split="test", streaming=True, trust_remote_code=True)
 
     collected = []  # (begin, end, speaker, text, audio np.float32)
     scanned = 0
@@ -77,11 +81,18 @@ def main() -> int:
         end = min(start + len(arr), total_samples)
         if start >= total_samples or end <= start:
             continue
-        timeline[start:end] += arr[: end - start]
+        chunk = arr[: end - start]
+        if CONFIG == "sdm":
+            # SDM slices come from ONE mic; overlapping slices share the same source,
+            # so keep the louder sample (max-abs) instead of summing (no doubling).
+            region = timeline[start:end]
+            mask = np.abs(chunk) > np.abs(region)
+            region[mask] = chunk[mask]
+        else:
+            timeline[start:end] += chunk
         turns.append({"speaker": spk, "start": round(b - WIN_START, 3), "end": round(e - WIN_START, 3)})
         if text:
             transcript_parts.append(text)
-    # Clip after summing overlaps.
     np.clip(timeline, -1.0, 1.0, out=timeline)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
