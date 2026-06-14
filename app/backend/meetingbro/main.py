@@ -46,6 +46,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "meetingbro.db"
 DEFAULT_EXPORT_ROOT = PROJECT_ROOT / "exports"
+DEFAULT_DIARIZATION_MODEL = (
+    PROJECT_ROOT / "models" / "speaker-embedding" / "3dspeaker_campplus_sv_zh-cn_16k-common.onnx"
+)
 
 
 def _recommended_asr_executor_workers() -> int:
@@ -56,6 +59,46 @@ def _recommended_asr_executor_workers() -> int:
 
 def _recommended_preview_asr_executor_workers() -> int:
     return 1
+
+
+def _build_diarizer(hardware: HardwareProfile | None):
+    """Build the speaker diarizer, or None when disabled (the default).
+
+    Speaker diarization is opt-in (MEETINGBRO_DIARIZATION_ENABLED). The neural
+    backend uses a sherpa-onnx speaker-embedding model for reliable cross-window
+    identity; if the model is missing or fails to load it falls back to the
+    dependency-free energy heuristic so a session never breaks over diarization.
+    """
+    if not _env_bool("MEETINGBRO_DIARIZATION_ENABLED", False):
+        return None
+
+    backend = os.environ.get("MEETINGBRO_DIARIZATION_BACKEND", "neural").strip().lower()
+    if backend == "neural":
+        model = os.environ.get("MEETINGBRO_DIARIZATION_MODEL", "").strip() or str(DEFAULT_DIARIZATION_MODEL)
+        if Path(model).exists():
+            try:
+                from .diarization.neural import NeuralDiarizer
+
+                diarizer = NeuralDiarizer(
+                    model_path=model,
+                    threshold=_env_float("MEETINGBRO_DIARIZATION_THRESHOLD", 0.5),
+                    num_threads=_env_int("MEETINGBRO_DIARIZATION_NUM_THREADS", 1),
+                    provider=_env_str_auto("MEETINGBRO_DIARIZATION_PROVIDER", "cpu"),
+                )
+                diarizer.ensure_loaded()
+                logger.info("speaker diarization enabled (neural, model=%s)", Path(model).name)
+                return diarizer
+            except Exception as exc:
+                logger.warning("neural diarizer load failed (%s); falling back to energy", exc)
+        else:
+            logger.warning(
+                "diarization model not found at %s; falling back to energy diarizer", model
+            )
+
+    from .diarization.energy import EnergyDiarizer
+
+    logger.info("speaker diarization enabled (energy heuristic)")
+    return EnergyDiarizer()
 
 
 def _recommended_summary_executor_workers() -> int:
@@ -451,6 +494,9 @@ async def lifespan(app: FastAPI):
     app.state.preview_asr_backend_name = _preview_asr_backend_name
     app.state.preview_asr_device = _preview_asr_device
     app.state.preview_asr_build_lock = asyncio.Lock()
+    # Speaker diarization is opt-in and shared across sessions (reset per session
+    # in the WS handler); None when disabled.
+    app.state.diarizer = _build_diarizer(hardware)
     # Readiness state surfaced via /health so the desktop app can show a
     # "preparing speech model" screen instead of a hung UI on first run (the
     # Whisper model downloads/loads lazily and can take minutes the first time).
@@ -859,12 +905,22 @@ async def session_ws(
         await ws.close()
         return
 
+    # Speaker diarization is shared across sessions; reset its accumulated
+    # speaker state so labels start fresh for this meeting.
+    session_diarizer = getattr(app.state, "diarizer", None)
+    if session_diarizer is not None:
+        try:
+            session_diarizer.reset()
+        except Exception as exc:
+            logger.warning("diarizer reset failed: %s", exc)
+
     config = SessionConfig(
         audio_source=audio_source,
         audio_source_name=source,
         audio_chunk_seconds=chunk_seconds,
         runtime_profile=profile_name,
         asr=app.state.asr,
+        diarizer=session_diarizer,
         preview_asr=session_preview_asr,
         preview_asr_backend_name=session_preview_backend_name,
         hardware_profile_label=getattr(app.state.hardware_profile, "label", "unknown"),
