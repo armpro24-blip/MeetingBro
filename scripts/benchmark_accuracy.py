@@ -152,6 +152,12 @@ class _LatencyResult:
     # Raw per-segment formal-lane latencies (seconds), so callers can pool
     # samples across multiple runs and compute robust percentiles.
     samples: list[float] = field(default_factory=list)
+    # Optional transcript capture (when capture_text=True): the formal lane's
+    # committed transcript and the streaming preview's committed view (the latest
+    # preview text snapshotted at each formal commit), for an apples-to-apples
+    # WER comparison from the SAME realtime pass.
+    formal_transcript: str = ""
+    streaming_transcript: str = ""
 
 
 def _wav_duration_seconds(path: Path) -> float:
@@ -317,6 +323,7 @@ async def _run_latency(
     preview_asr=None,
     preview_asr_backend_name: str = "qwen3",
     extra_overrides: dict | None = None,
+    capture_text: bool = False,
 ) -> _LatencyResult:
     prepared, is_temp = _prepare_latency_wav(wav)
     cfg_overrides = dict(forced_language="en")
@@ -345,16 +352,28 @@ async def _run_latency(
             latencies: list[float] = []
             preview_latencies: list[float] = []
             bench_start = time.monotonic()
+            formal_texts: list[str] = []
+            streaming_snapshots: list[str] = []
+            latest_preview_text = {"v": ""}
 
             async def collect() -> None:
                 async for event in manager.events():
                     base = source.first_chunk_wall or bench_start
                     if event.type == "transcript_segment":
                         latencies.append(time.monotonic() - base - event.payload["end_time"])
+                        if capture_text:
+                            formal_texts.append((event.payload.get("text") or "").strip())
+                            # Snapshot the streaming lane's latest committed view for
+                            # this utterance, then reset for the next one.
+                            if latest_preview_text["v"]:
+                                streaming_snapshots.append(latest_preview_text["v"])
+                                latest_preview_text["v"] = ""
                     elif event.type == "transcript_preview":
                         seg = event.payload.get("segment")
                         if seg:
                             preview_latencies.append(time.monotonic() - base - seg["end_time"])
+                            if capture_text:
+                                latest_preview_text["v"] = (seg.get("text") or "").strip()
 
             collector = asyncio.create_task(collect())
             try:
@@ -380,6 +399,9 @@ async def _run_latency(
             p50, p95 = _stats(latencies)
             mx = max(latencies) if latencies else float("nan")
             pv_p50, pv_p95 = _stats(preview_latencies)
+            if capture_text and latest_preview_text["v"]:
+                # Trailing utterance that never saw a following formal commit.
+                streaming_snapshots.append(latest_preview_text["v"])
             return _LatencyResult(
                 str(wav.name), p50, p95, mx, len(latencies), asr_rtf,
                 preview_p50=(None if not preview_latencies else pv_p50),
@@ -387,6 +409,8 @@ async def _run_latency(
                 preview_segments=len(preview_latencies),
                 preview_rtf=preview_rtf,
                 samples=list(latencies),
+                formal_transcript=" ".join(t for t in formal_texts if t).strip(),
+                streaming_transcript=" ".join(t for t in streaming_snapshots if t).strip(),
             )
     finally:
         if is_temp and prepared.exists():

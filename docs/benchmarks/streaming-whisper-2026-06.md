@@ -16,16 +16,26 @@
 
 | lane | p50 (s) | p95 (s) | segments | asr_rtf |
 | --- | --- | --- | --- | --- |
-| formal (Whisper) | 3.98 | 7.01 | 53 | 0.45 |
-| whisper-streaming (preview) | 1.49 | 2.65 | 38 | 0.64 |
+| formal (Whisper) | 3.94 | 6.99 | 53 | 0.45 |
+| whisper-streaming (preview) | 1.48 | 2.69 | 38 | 0.62 |
+
+## Accuracy (WER, same realtime pass, vs ground truth)
+
+| transcript | WER |
+| --- | --- |
+| formal committed | 0.552 |
+| whisper-streaming committed | 0.609 |
+
+- Streaming committed WER vs formal: **streaming worse by 0.058** — investigate before making streaming authoritative (Phase 2).
+- The streaming committed view is the latest preview text snapshotted at each formal commit; both transcripts come from the same realtime pass so the comparison is apples-to-apples.
 
 ## Interpretation vs Success Criteria
 
 ### Criterion 1: Committed-caption p50 well under ~3.8 s formal median (target ~1–1.5 s)
-- **MET** — streaming p50 = 1.49 s  (formal p50 = 3.98 s; speedup = 2.7×)
+- **MET** — streaming p50 = 1.48 s  (formal p50 = 3.94 s; speedup = 2.7×)
 
 ### Criterion 2: ASR RTF < 1 (no sustained backpressure)
-- **MET** — streaming preview RTF = 0.64 (< 1.0)
+- **MET** — streaming preview RTF = 0.62 (< 1.0)
 
 ## Notes
 

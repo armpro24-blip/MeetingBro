@@ -259,6 +259,9 @@ def _build_streaming_report(
     fixture: dict,
     formal_lat: "_LatencyResult",
     streaming_lat: "_LatencyResult",
+    *,
+    formal_wer: float | None = None,
+    streaming_wer: float | None = None,
 ) -> str:
     """Build the streaming-whisper benchmark report (Task 5 output)."""
     from benchmark_accuracy import _fmt, _LatencyResult  # noqa: F401 (type hint only)
@@ -293,6 +296,24 @@ def _build_streaming_report(
         f"{ba._fmt(streaming_rtf, 2)} |"
     )
     L.append("")
+    if formal_wer is not None or streaming_wer is not None:
+        L.append("## Accuracy (WER, same realtime pass, vs ground truth)")
+        L.append("")
+        L.append("| transcript | WER |")
+        L.append("| --- | --- |")
+        L.append(f"| formal committed | {ba._fmt(formal_wer)} |")
+        L.append(f"| whisper-streaming committed | {ba._fmt(streaming_wer)} |")
+        L.append("")
+        if formal_wer is not None and streaming_wer is not None:
+            delta = streaming_wer - formal_wer
+            verdict = (
+                "**at parity** (streaming within +0.02 of formal)" if delta <= 0.02
+                else f"**streaming worse by {delta:.3f}** — investigate before making streaming authoritative (Phase 2)"
+            )
+            L.append(f"- Streaming committed WER vs formal: {verdict}.")
+        L.append("- The streaming committed view is the latest preview text snapshotted at each formal commit; "
+                 "both transcripts come from the same realtime pass so the comparison is apples-to-apples.")
+        L.append("")
     L.append("## Interpretation vs Success Criteria")
     L.append("")
     formal_p50 = formal_lat.p50
@@ -423,7 +444,9 @@ async def main(argv: list[str]) -> int:
         print(f"    formal p50={ba._fmt(formal_lat.p50, 2)}s p95={ba._fmt(formal_lat.p95, 2)}s "
               f"asr_rtf={ba._fmt(formal_lat.asr_rtf, 2)}")
 
-        # Streaming-preview lane latency (preview_asr=StreamingWhisperAdapter).
+        # Streaming-preview lane latency + transcript capture (preview_asr=StreamingWhisperAdapter).
+        # capture_text records both the formal committed transcript and the
+        # streaming committed view from the SAME pass for an apples-to-apples WER.
         print("  Running streaming-preview latency pass…")
         streaming_adapter = StreamingWhisperAdapter(adapter)
         streaming_lat = await ba._run_latency(
@@ -431,13 +454,22 @@ async def main(argv: list[str]) -> int:
             preview_asr=streaming_adapter,
             preview_asr_backend_name="whisper-streaming",
             extra_overrides=overrides_sp,
+            capture_text=True,
         )
         print(f"    streaming preview p50={ba._fmt(streaming_lat.preview_p50, 2)}s "
               f"p95={ba._fmt(streaming_lat.preview_p95, 2)}s "
               f"segs={streaming_lat.preview_segments} "
               f"preview_rtf={ba._fmt(streaming_lat.preview_rtf, 2)}")
 
-        report = _build_streaming_report(args, fixture, formal_lat, streaming_lat)
+        # WER of the streaming committed view vs the formal committed transcript,
+        # both captured in the streaming pass, scored against ground truth.
+        ground_truth = fixture.get("ground_truth", "") or ""
+        formal_wer = ba.asr_metrics.wer(ground_truth, streaming_lat.formal_transcript) if ground_truth else None
+        streaming_wer = ba.asr_metrics.wer(ground_truth, streaming_lat.streaming_transcript) if ground_truth else None
+        print(f"    WER (same pass): formal={ba._fmt(formal_wer)} streaming={ba._fmt(streaming_wer)}")
+
+        report = _build_streaming_report(args, fixture, formal_lat, streaming_lat,
+                                         formal_wer=formal_wer, streaming_wer=streaming_wer)
         out = Path(args.out)
         if not out.is_absolute():
             out = ROOT / out
