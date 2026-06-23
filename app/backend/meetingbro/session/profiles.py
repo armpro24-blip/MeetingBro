@@ -26,6 +26,11 @@ RUNTIME_PROFILE_PRESETS: dict[str, dict[str, Any]] = {
         "pre_vad_trailing_silence_seconds": 0.60,
         "pre_vad_adaptive_trailing_silence_enabled": False,
         "pre_vad_adaptive_fast_trailing_silence_seconds": 0.30,
+        # Cap how long pre-VAD holds a pause-free segment before the formal lane
+        # transcribes it. Measured on real meeting audio (AMI): 8.0 -> 4.0 cuts
+        # tail caption latency (p95) ~25% with no WER change across en/de/zh.
+        # See docs/benchmarks/frontier-latency-accuracy-notes.md.
+        "pre_vad_max_segment_seconds": 4.0,
         "language_lock_enabled": False,
         "weak_speech_rescue_enabled": True,
         "weak_speech_rescue_fast_window_seconds": 3.0,
@@ -54,6 +59,9 @@ RUNTIME_PROFILE_PRESETS: dict[str, dict[str, Any]] = {
         "pre_vad_trailing_silence_seconds": 0.40,
         "pre_vad_adaptive_trailing_silence_enabled": True,
         "pre_vad_adaptive_fast_trailing_silence_seconds": 0.25,
+        # Lower tail-latency cap (by extension from the balanced measurement;
+        # performance mode targets lower latency). See balanced note above.
+        "pre_vad_max_segment_seconds": 4.0,
         "language_lock_enabled": False,
         "weak_speech_rescue_enabled": True,
         "weak_speech_rescue_fast_window_seconds": 2.5,
