@@ -8,6 +8,7 @@ import numpy as np
 
 from ..schemas import OriginalLanguage
 from .base import ASRAdapter, ASRSegment
+from .streaming import Word
 
 logger = logging.getLogger(__name__)
 
@@ -272,4 +273,56 @@ class FasterWhisperAdapter(ASRAdapter):
                     ),
                 )
             )
+        return out
+
+    def transcribe_words(
+        self,
+        samples: np.ndarray,
+        sample_rate: int,
+        *,
+        forced_language: Optional[str] = None,
+        offset_seconds: float = 0.0,
+        initial_prompt: Optional[str] = None,
+    ) -> list[Word]:
+        """Decode with word-level timestamps for the streaming lane.
+
+        Uses the SAME loaded model as ``transcribe`` (no second WhisperModel).
+        Returns a flat list of ``Word`` with absolute times.
+        """
+        if samples.size == 0:
+            return []
+        if sample_rate != 16_000:
+            raise ValueError(f"FasterWhisperAdapter expects 16 kHz input, got {sample_rate}")
+        if samples.dtype != np.float32:
+            samples = samples.astype(np.float32)
+
+        model = self._ensure_model()
+        segments_iter, _info = model.transcribe(
+            samples,
+            language=forced_language,
+            initial_prompt=initial_prompt or None,
+            vad_filter=True,
+            vad_parameters=dict(
+                threshold=self._vad_threshold,
+                min_speech_duration_ms=self._vad_min_speech_ms,
+                min_silence_duration_ms=self._vad_min_silence_ms,
+                speech_pad_ms=self._vad_speech_pad_ms,
+            ),
+            temperature=0.0,
+            condition_on_previous_text=False,
+            no_repeat_ngram_size=3,
+            word_timestamps=True,
+            beam_size=self._beam_size,
+            best_of=1,
+            multilingual=self._multilingual,
+            language_detection_threshold=self._language_detection_threshold,
+            language_detection_segments=self._language_detection_segments,
+        )
+        out: list[Word] = []
+        for seg in segments_iter:
+            for wd in getattr(seg, "words", None) or []:
+                text = (wd.word or "").strip()
+                if not text:
+                    continue
+                out.append(Word(text=text, start=offset_seconds + float(wd.start), end=offset_seconds + float(wd.end)))
         return out
