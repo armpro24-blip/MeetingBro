@@ -6,7 +6,7 @@
 // pushed to the renderer so the UI can show a friendly startup / error screen.
 
 const { app } = require("electron");
-const { spawn } = require("node:child_process");
+const { spawn, execFile } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -72,6 +72,59 @@ class BackendSupervisor {
     return { backendDir, venvPython };
   }
 
+  // Validate the venv interpreter BEFORE spawning the backend: it must be
+  // Python 3.12+ AND have the backend dependencies installed. A venv that
+  // exists but was created with an older Python, or never had `pip install -e .`
+  // run, otherwise surfaces as a cryptic ModuleNotFoundError crash in the gate.
+  // We probe `fastapi` (a third-party dep) rather than the local `meetingbro`
+  // package, which is importable from the cwd even when nothing is installed.
+  _validateVenv(venvPython, backendDir) {
+    return new Promise((resolve) => {
+      const probe =
+        "import sys, importlib.util; " +
+        "v = sys.version_info; " +
+        "print('%d.%d' % (v[0], v[1])); " +
+        "print('deps_ok' if importlib.util.find_spec('fastapi') else 'deps_missing')";
+      execFile(
+        venvPython,
+        ["-c", probe],
+        { cwd: backendDir, timeout: 15000, windowsHide: true },
+        (err, stdout) => {
+          if (err) {
+            resolve({
+              ok: false,
+              message: "The backend environment looks broken. Please run the installer (scripts/install) again.",
+            });
+            return;
+          }
+          const lines = String(stdout).trim().split(/\r?\n/);
+          const version = (lines[0] || "").trim();
+          const deps = (lines[1] || "").trim();
+          const [major, minor] = version.split(".").map((n) => parseInt(n, 10));
+          if (!(major > 3 || (major === 3 && minor >= 12))) {
+            resolve({
+              ok: false,
+              message:
+                `The backend environment uses Python ${version || "an unknown version"}, but MeetingBro needs ` +
+                "Python 3.12 or newer. Please recreate it with the installer (scripts/install).",
+            });
+            return;
+          }
+          if (deps !== "deps_ok") {
+            resolve({
+              ok: false,
+              message:
+                "The backend environment is incomplete — its dependencies aren't installed. " +
+                "Please run the installer (scripts/install) again.",
+            });
+            return;
+          }
+          resolve({ ok: true });
+        },
+      );
+    });
+  }
+
   _openLogStream() {
     try {
       const logDir = path.join(app.getPath("userData"), "logs");
@@ -124,6 +177,16 @@ class BackendSupervisor {
         "failed",
         "Setup isn't finished — the backend environment is missing. Please run the installer (scripts/install) once.",
       );
+      return;
+    }
+
+    // Pre-spawn validation turns a cryptic ModuleNotFoundError into a clear,
+    // actionable message (wrong Python version / dependencies not installed).
+    this._emit("locating", "Checking the backend environment…");
+    const venvCheck = await this._validateVenv(venvPython, backendDir);
+    if (!venvCheck.ok) {
+      this._appendLog(`[backend] venv validation failed: ${venvCheck.message}`);
+      this._emit("failed", venvCheck.message);
       return;
     }
 
