@@ -315,17 +315,18 @@ async def _run_latency(
     wav: Path,
     *,
     preview_asr=None,
+    preview_asr_backend_name: str = "qwen3",
     extra_overrides: dict | None = None,
 ) -> _LatencyResult:
     prepared, is_temp = _prepare_latency_wav(wav)
     cfg_overrides = dict(forced_language="en")
     if preview_asr is not None:
-        # Enable the preview (Qwen) lane on a dedicated executor — this is what
-        # delivers sub-second captions. Overrides the formal-only baseline.
+        # Enable the preview lane on a dedicated executor — this is what delivers
+        # sub-second captions. Overrides the formal-only baseline.
         cfg_overrides.update(
             fast_preview_enabled=True,
             preview_asr=preview_asr,
-            preview_asr_backend_name="qwen3",
+            preview_asr_backend_name=preview_asr_backend_name,
         )
     if extra_overrides:
         cfg_overrides.update(extra_overrides)
