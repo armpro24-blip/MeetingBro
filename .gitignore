@@ -40,3 +40,6 @@ models/
 # Python package metadata
 *.egg-info/
 app/backend/*.egg-info/
+
+# Subagent-driven-development scratch (controller ledger)
+.superpowers/

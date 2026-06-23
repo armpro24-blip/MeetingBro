@@ -25,7 +25,7 @@ flowchart TD
     COND --> PREVIEW
 
     FORMAL["Formal ASR\n(Whisper small/medium)\n~2–5s latency"]
-    PREVIEW["Preview ASR\n(Qwen3 or tiny-Whisper)\n~0.5–1s latency"]
+    PREVIEW["Preview ASR\n(whisper-streaming default, or Qwen3)\n~1–1.5s latency"]
 
     FORMAL --> SM
     PREVIEW --> SM
@@ -154,10 +154,17 @@ MeetingBro runs two ASR paths in parallel to balance latency and accuracy:
 
 **Preview ASR** (fast subtitles):
 
-- Model: Qwen3 0.6B int8 (via sherpa-onnx) or tiny-Whisper
-- Latency: ~0.5–1.0 seconds
-- Use: displayed immediately as live subtitles
-- Configurable via `MEETINGBRO_PREVIEW_ASR_BACKEND`
+- Backends (`MEETINGBRO_PREVIEW_ASR_BACKEND`):
+  - `whisper-streaming` (default when no Qwen model present): re-decodes the growing
+    audio window with the **shared formal Whisper model** and commits a stable
+    word-prefix via LocalAgreement-2 — no extra model/download. See
+    `asr/streaming.py` + `asr/streaming_whisper_adapter.py`.
+  - `qwen3`: optional Qwen3 0.6B int8 via sherpa-onnx (~700 MB download).
+  - `whisper`: a dedicated Whisper preview model.
+- Latency: ~1–1.5 s committed-caption (measured, `whisper-streaming` on CPU)
+- Use: displayed immediately as live subtitles; best-effort, never authoritative
+- Note: the live caption trades some accuracy for latency and is corrected by the
+  formal lane (see `docs/benchmarks/streaming-whisper-2026-06.md`).
 
 **Formal ASR** (accurate):
 

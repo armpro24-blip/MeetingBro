@@ -2,6 +2,10 @@
 
 Behaviour changes introduced by the C1–C10 fixes (ordered by priority).
 
+> For the later 2026-06 accuracy + latency optimization round (benchmark harness,
+> vocabulary biasing, neural diarization, preview lane), see
+> [docs/optimization-2026-06.md](optimization-2026-06.md).
+
 ---
 
 ## P0 — Must-fix

@@ -31,6 +31,8 @@ Platform support: Windows, macOS, and Linux.
 | **Rolling summary** | AI-generated summary of the last 3–5 minutes, refreshes automatically |
 | **Meeting Board** | Cumulative overview: topics, decisions, action items, open questions |
 | **Exportable notes** | Export full transcript, summary, and notes to Markdown files |
+| **Meeting history** | Revisit, re-export, or delete past meetings from the in-app history browser (🕘) |
+| **Fast live captions** | Optional streaming preview shows captions in ~1.5 s instead of waiting for the full segment — no extra model needed |
 | **System audio capture** | Capture any meeting platform's audio (Windows native; macOS/Linux with loopback setup) |
 | **Microphone capture** | Works on Windows, macOS, and Linux (in-person meetings) |
 | **Local or cloud LLM** | Use OpenAI, Groq, Ollama, or any OpenAI-compatible API for summaries |
@@ -59,7 +61,8 @@ Platform support: Windows, macOS, and Linux.
 - **Whisper models download automatically on first run.** The `small` model is about 460 MB. This happens once and is saved to your disk.
 - **MeetingBro has three runtime modes**: `Summary only` for weaker devices, `Balanced` for most laptops/desktops, and `Performance` for stronger machines that can trade more compute for more aggressive realtime behavior.
 - **Speech language is separate from runtime mode.** Set `Speech = Auto` for mixed-language meetings; set a specific speech language when the meeting stays in one language and you want tighter recognition.
-- **The Qwen3 preview model is optional advanced setup** (about 700 MB). Most users should start without it. It is only useful if you explicitly want a separate fast-preview lane on stronger machines.
+- **Fast live captions work out of the box.** On capable machines the `whisper-streaming` preview lane shows captions in ~1.5 s (vs several seconds for the full segment) using the Whisper model you already have — no extra download. These live captions trade a little accuracy for speed and are corrected by the main transcript.
+- **The Qwen3 preview model is optional advanced setup** (about 700 MB) and is *not* required for fast captions (streaming covers that). Most users should start without it; it's an alternative preview backend for those who specifically want it.
 - **An LLM API key is optional.** Without one, transcription still works perfectly. You only need a key for AI-generated summaries and translation. Some providers such as Groq or OpenRouter may offer a free tier — check their current pricing pages.
 
 ---
@@ -263,10 +266,13 @@ python -c "from huggingface_hub import snapshot_download; snapshot_download(repo
 
 The model is about 700 MB and downloads once.
 
-If you do not want the extra preview model, skip this step. To force the preview lane back to Whisper-only behavior, add this to your `.env`:
+If you do not want the extra preview model, skip this step — fast live captions still work via the default `whisper-streaming` lane (no download). To pin the preview backend explicitly, set one of these in your `.env`:
 
 ```env
-MEETINGBRO_PREVIEW_ASR_BACKEND=whisper
+# whisper-streaming = fast captions reusing the main Whisper model (default when no Qwen model is present)
+# qwen3             = use the optional Qwen3 model downloaded above
+# whisper           = a dedicated Whisper preview model
+MEETINGBRO_PREVIEW_ASR_BACKEND=whisper-streaming
 ```
 
 ### Step 6 — Install the frontend
@@ -370,8 +376,8 @@ MeetingBro captures audio from your computer and processes it through a local pi
 ```
 Audio source (mic or system audio)
     ↓ Voice Activity Detection (VAD)
-    ↓ Whisper ASR
-    ↓ Optional preview lane (advanced setups only)
+    ↓ Whisper ASR  (authoritative transcript)
+    ↓ Streaming preview lane (fast live captions; whisper-streaming by default, or Qwen3)
     ↓ Speaker diarization (optional)
     ↓ Translation (optional, via LLM)
     ↓ Summarization (optional, via LLM)
@@ -379,7 +385,7 @@ Audio source (mic or system audio)
     ↓ Export (Markdown files)
 ```
 
-In the default setup, Whisper is the main engine. The optional Qwen3 preview path is no longer the normal recommendation for average devices.
+In the default setup, Whisper is the main (authoritative) engine. Fast live captions come from a **streaming preview lane** that re-decodes the growing audio window and commits a stable prefix (LocalAgreement) — by default this reuses the same Whisper model (`whisper-streaming`, no extra download); the optional Qwen3 model is an alternative preview backend. The main Whisper transcript always corrects the preview.
 
 Two audio capture modes:
 
@@ -437,6 +443,10 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)** for how to set up a development envir
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common problems and solutions |
 | [docs/faq.md](docs/faq.md) | Frequently asked questions |
 | [docs/roadmap.md](docs/roadmap.md) | Development roadmap |
+| [docs/optimization-2026-06.md](docs/optimization-2026-06.md) | 2026-06 accuracy + latency optimization report (what shipped, what didn't, and why) |
+| [docs/benchmarks/baseline-2026-06.md](docs/benchmarks/baseline-2026-06.md) | Reproducible WER/CER + latency baseline |
+| [docs/benchmarks/frontier-latency-accuracy-notes.md](docs/benchmarks/frontier-latency-accuracy-notes.md) | Latency × accuracy frontier findings (why the formal-lane median is structural) |
+| [docs/benchmarks/streaming-whisper-2026-06.md](docs/benchmarks/streaming-whisper-2026-06.md) | Streaming-Whisper caption lane benchmark (latency + WER vs the formal lane) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup and contribution guide |
 | [docs/product-principles.md](docs/product-principles.md) | Product and engineering principles |
 
