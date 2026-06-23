@@ -2952,6 +2952,7 @@ class SessionManager:
                 loop,
                 samples,
                 sample_rate,
+                buf_start=buf_start,
                 prompt=prompt,
                 forced_language=forced_language,
             )
@@ -3021,6 +3022,7 @@ class SessionManager:
         samples: np.ndarray,
         sample_rate: int,
         *,
+        buf_start: float = 0.0,
         prompt: Optional[str],
         forced_language: Optional[str],
     ) -> list[ASRSegment]:
@@ -3039,11 +3041,11 @@ class SessionManager:
         try:
             return await loop.run_in_executor(
                 executor,
-                lambda m=samples, sr=sample_rate, p=prompt, fl=forced_language, asr=adapter: asr.transcribe(
+                lambda m=samples, sr=sample_rate, p=prompt, fl=forced_language, asr=adapter, os=buf_start: asr.transcribe(
                     m,
                     sr,
                     forced_language=fl,
-                    offset_seconds=0.0,
+                    offset_seconds=os,
                     initial_prompt=p,
                     quality_preset="realtime",
                 ),
