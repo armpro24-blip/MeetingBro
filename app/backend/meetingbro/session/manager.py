@@ -3041,11 +3041,11 @@ class SessionManager:
         try:
             return await loop.run_in_executor(
                 executor,
-                lambda m=samples, sr=sample_rate, p=prompt, fl=forced_language, asr=adapter, os=buf_start: asr.transcribe(
+                lambda m=samples, sr=sample_rate, p=prompt, fl=forced_language, asr=adapter: asr.transcribe(
                     m,
                     sr,
                     forced_language=fl,
-                    offset_seconds=os,
+                    offset_seconds=0.0,
                     initial_prompt=p,
                     quality_preset="realtime",
                 ),
@@ -3057,11 +3057,11 @@ class SessionManager:
                     return []
                 return await loop.run_in_executor(
                     self._asr_executor,
-                    lambda m=samples, sr=sample_rate, p=prompt, fl=forced_language, os=buf_start: self._cfg.asr.transcribe(
+                    lambda m=samples, sr=sample_rate, p=prompt, fl=forced_language: self._cfg.asr.transcribe(
                         m,
                         sr,
                         forced_language=fl,
-                        offset_seconds=os,
+                        offset_seconds=0.0,
                         initial_prompt=p,
                         quality_preset="realtime",
                     ),

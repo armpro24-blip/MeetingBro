@@ -20,11 +20,11 @@ _PREVIEW_CONFIDENCE = 0.6
 
 
 class StreamingWhisperAdapter(ASRAdapter):
-    def __init__(self, formal, *, reset_gap_seconds: float = 0.25) -> None:
+    def __init__(self, formal, *, reset_shrink_seconds: float = 0.25) -> None:
         self._formal = formal
         self._committer = StreamingTranscriber()
-        self._reset_gap_seconds = reset_gap_seconds
-        self._last_offset: Optional[float] = None
+        self._reset_shrink_seconds = reset_shrink_seconds
+        self._last_window_duration: Optional[float] = None
         self._language: OriginalLanguage = "unknown"
 
     def transcribe(
@@ -37,17 +37,23 @@ class StreamingWhisperAdapter(ASRAdapter):
         initial_prompt: Optional[str] = None,
         quality_preset: str = "realtime",
     ) -> list[ASRSegment]:
-        # A forward jump in the window start means the formal lane committed and
-        # a new utterance window began — reset LocalAgreement state.
-        if self._last_offset is None or offset_seconds > self._last_offset + self._reset_gap_seconds:
+        # A significant shrink in window duration means the formal lane committed
+        # and clipped the front of the buffer — the utterance restarted, so reset
+        # LocalAgreement state.  Window grows tick-to-tick within an utterance
+        # (no reset) and only shrinks at a formal commit boundary (reset).
+        current_duration = len(samples) / sample_rate
+        if (
+            self._last_window_duration is not None
+            and current_duration < self._last_window_duration - self._reset_shrink_seconds
+        ):
             self._committer.reset()
-        self._last_offset = offset_seconds
+        self._last_window_duration = current_duration
 
         words: list[Word] = self._formal.transcribe_words(
             samples,
             sample_rate,
             forced_language=forced_language,
-            offset_seconds=offset_seconds,
+            offset_seconds=0.0,
             initial_prompt=initial_prompt,
         )
         if forced_language in ("zh", "en", "de"):
@@ -70,4 +76,4 @@ class StreamingWhisperAdapter(ASRAdapter):
 
     def flush(self) -> None:
         self._committer.flush()
-        self._last_offset = None
+        self._last_window_duration = None

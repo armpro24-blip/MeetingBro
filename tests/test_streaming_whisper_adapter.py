@@ -31,14 +31,19 @@ def test_emits_growing_caption_and_stabilizes_committed_prefix():
     assert s2[0].text == "the cat sat"             # committed("the cat") + pending("sat")
 
 
-def test_offset_advance_resets_committer_for_new_utterance():
+def test_window_duration_drop_resets_committer_for_new_utterance():
+    # Simulate: first call uses a long buffer (5 s window), then the formal lane
+    # commits and the window restarts with a short buffer (0.1 s) — that drop
+    # exceeds the 0.25 s threshold and must reset LocalAgreement state.
     formal = _ScriptedFormal([
         [("the", 0.0, 0.2), ("cat", 0.2, 0.5)],
-        [("dog", 5.0, 5.3)],   # new utterance, buffer start jumped to 5.0
+        [("dog", 0.0, 0.3)],   # new utterance after formal commit, window-relative times
     ])
     a = StreamingWhisperAdapter(formal)
-    a.transcribe(_samples(), 16_000, offset_seconds=0.0)
-    s = a.transcribe(_samples(), 16_000, offset_seconds=5.0)
+    long_samples = np.zeros(5 * 16_000, dtype=np.float32)   # 5 s
+    short_samples = np.zeros(int(0.1 * 16_000), dtype=np.float32)  # 0.1 s  (drop > 0.25 s)
+    a.transcribe(long_samples, 16_000, offset_seconds=0.0)
+    s = a.transcribe(short_samples, 16_000, offset_seconds=0.0)
     assert s[0].text == "dog"                        # not "the cat dog"
 
 
