@@ -220,7 +220,13 @@ def _keyword_recall(transcript: str, keywords: list[str]) -> tuple[int, int]:
     return len(keywords), hit
 
 
-async def _run_accuracy(adapter: FasterWhisperAdapter, fixture: dict, *, apply_vocab: bool = True) -> _AccuracyResult:
+async def _run_accuracy(
+    adapter: FasterWhisperAdapter,
+    fixture: dict,
+    *,
+    apply_vocab: bool = True,
+    extra_overrides: dict | None = None,
+) -> _AccuracyResult:
     fid = fixture["id"]
     language = fixture.get("language", "")
     ground_truth = fixture.get("ground_truth", "")
@@ -253,7 +259,7 @@ async def _run_accuracy(adapter: FasterWhisperAdapter, fixture: dict, *, apply_v
                 # oldest audio and silently truncate the start of longer clips,
                 # so we make the queue effectively unbounded for scoring.
                 audio_input_queue_max_seconds=100_000.0,
-                **_baseline_config(),
+                **_baseline_config(**(extra_overrides or {})),
             ))
             await manager.start()
             if manager._task is not None:
@@ -301,7 +307,13 @@ def _prepare_latency_wav(path: Path) -> tuple[Path, bool]:
     return Path(tmp.name), True
 
 
-async def _run_latency(adapter: FasterWhisperAdapter, wav: Path, *, preview_asr=None) -> _LatencyResult:
+async def _run_latency(
+    adapter: FasterWhisperAdapter,
+    wav: Path,
+    *,
+    preview_asr=None,
+    extra_overrides: dict | None = None,
+) -> _LatencyResult:
     prepared, is_temp = _prepare_latency_wav(wav)
     cfg_overrides = dict(forced_language="en")
     if preview_asr is not None:
@@ -312,6 +324,8 @@ async def _run_latency(adapter: FasterWhisperAdapter, wav: Path, *, preview_asr=
             preview_asr=preview_asr,
             preview_asr_backend_name="qwen3",
         )
+    if extra_overrides:
+        cfg_overrides.update(extra_overrides)
     try:
         with tempfile.TemporaryDirectory() as tmp:
             storage = Storage(Path(tmp) / "bench.db")
