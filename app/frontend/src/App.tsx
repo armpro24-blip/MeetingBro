@@ -145,6 +145,8 @@ function formatSourceLabel(source: string | null | undefined): string {
       return "System Audio";
     case "mixed":
       return "System + Mic";
+    case "sample":
+      return "Sample audio (demo)";
     default:
       return source ?? "—";
   }
@@ -1061,6 +1063,18 @@ export default function App() {
     setSessionEnabled(true);
   };
 
+  const handleTrySample = () => {
+    // One-click demo: replay the bundled clip so a first-time user / tester sees
+    // the full pipeline without configuring any audio device.
+    setSource("sample");
+    if (hasRetainedMeetingData) {
+      setRestartPromptOpen(true);
+      return;
+    }
+    setLastExport(null);
+    setSessionEnabled(true);
+  };
+
   const handleRestartWithoutSave = () => {
     setRestartPromptOpen(false);
     setLastExport(null);
@@ -1161,6 +1175,7 @@ export default function App() {
                 <option value="mic">Mic</option>
                 <option value="loopback">System audio</option>
                 <option value="mixed">System + Mic</option>
+                <option value="sample">Sample audio (demo)</option>
               </select>
             </label>
             {(source === "mic" || source === "mixed") && audioDevices && audioDevices.mics.length > 0 && (
@@ -1221,7 +1236,17 @@ export default function App() {
           </div>
           <div className="session-controls" aria-label="Session actions">
             {!sessionEnabled ? (
-              <button className="start-btn" onClick={handleStartSession} disabled={!backend.isReady}>Start</button>
+              <>
+                <button
+                  className="sample-btn"
+                  onClick={handleTrySample}
+                  disabled={!backend.isReady}
+                  title="Replay a bundled demo clip — no microphone or meeting needed"
+                >
+                  ▶ Try sample
+                </button>
+                <button className="start-btn" onClick={handleStartSession} disabled={!backend.isReady}>Start</button>
+              </>
             ) : (
               <>
                 {state === "paused" ? (

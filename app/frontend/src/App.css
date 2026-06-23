@@ -239,6 +239,26 @@ html, body, #root {
   background: #15803d;
 }
 
+.sample-btn {
+  font-size: 13px;
+  padding: 8px 15px;
+  margin-right: 6px;
+  background: transparent;
+  color: #16a34a;
+  border: 1px solid #16a34a;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.sample-btn:hover:not(:disabled) {
+  background: rgba(22, 163, 74, 0.1);
+}
+
+.sample-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .sep {
   margin: 0 6px;
   color: #9ca3af;

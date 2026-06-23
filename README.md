@@ -338,6 +338,11 @@ The Electron window opens automatically. If it does not, open your browser and g
 
 ## First successful run checklist
 
+> **Just want to see it work?** Click **▶ Try sample** (next to Start). It replays
+> a bundled demo clip through the full transcribe → summarize pipeline — no
+> microphone, meeting, or loopback setup required. Best way to confirm your
+> install before configuring real audio capture.
+
 Before starting a session, verify:
 
 - [ ] Backend is running (see terminal output above)

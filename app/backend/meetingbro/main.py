@@ -791,6 +791,9 @@ def _build_audio_source(
     - "loopback" / "system": platform system-audio loopback (Windows WASAPI,
       macOS virtual loopback device, Linux PulseAudio/PipeWire monitor).
     - "mixed": microphone + system loopback mixed together.
+    - "sample": replay the bundled demo clip (``data/sample_en.wav``) at natural
+      pace so a first-time user / tester can see the full transcribe → summarize
+      pipeline without configuring any audio device or meeting platform.
     - "file:<path>": replay a WAV file for the E2E vertical-slice test.
 
     ``mic_device`` / ``speaker_name`` optionally pin a specific input / output
@@ -815,6 +818,18 @@ def _build_audio_source(
             balance_smoothing=_env_float("MEETINGBRO_MIXED_BALANCE_SMOOTHING", 0.35),
             microphone_device=mic,
             speaker_name=speaker,
+        )
+    if source == "sample":
+        sample_path = PROJECT_ROOT / "data" / "sample_en.wav"
+        if not sample_path.exists():
+            raise FileNotFoundError(sample_path)
+        # realtime=True replays at natural pace: a live-feeling demo that also
+        # respects the bounded input queue (offline-fast replay would flood it).
+        return WavFileSource(
+            sample_path,
+            sample_rate=16_000,
+            chunk_seconds=_env_float("MEETINGBRO_SAMPLE_CHUNK_SECONDS", 0.5),
+            realtime=True,
         )
     if source.startswith("file:"):
         path = Path(source[len("file:") :]).expanduser().resolve()
