@@ -1,0 +1,81 @@
+{
+  "config": {
+    "fixture_id": "ami_en2002a",
+    "language": "en",
+    "model_size": "small",
+    "device": "cpu",
+    "compute_type": "int8",
+    "beam_size": 3,
+    "runtime_profile": "balanced",
+    "pre_vad_max": "8,6,4,3,2",
+    "accumulation": "2.0",
+    "label": "frontier-2026-06 AMI 1D pre_vad sweep"
+  },
+  "points": [
+    {
+      "pre_vad_max_segment_seconds": 8.0,
+      "asr_accumulation_seconds": 2.0,
+      "wer": 0.5815450643776824,
+      "metric": "wer",
+      "accuracy_segments": 66,
+      "accuracy_rtf": 0.45980369370128654,
+      "latency_p50_s": 3.8300000000102408,
+      "latency_p95_s": 9.195750000056345,
+      "latency_segments": 66,
+      "is_baseline": true,
+      "pareto": true
+    },
+    {
+      "pre_vad_max_segment_seconds": 6.0,
+      "asr_accumulation_seconds": 2.0,
+      "wer": 0.5450643776824035,
+      "metric": "wer",
+      "accuracy_segments": 47,
+      "accuracy_rtf": 0.45260774770852275,
+      "latency_p50_s": 4.625000000171362,
+      "latency_p95_s": 8.074100000191862,
+      "latency_segments": 47,
+      "is_baseline": false,
+      "pareto": false
+    },
+    {
+      "pre_vad_max_segment_seconds": 4.0,
+      "asr_accumulation_seconds": 2.0,
+      "wer": 0.5128755364806867,
+      "metric": "wer",
+      "accuracy_segments": 44,
+      "accuracy_rtf": 0.9178363513579038,
+      "latency_p50_s": 5.687999999849126,
+      "latency_p95_s": 9.511600000007446,
+      "latency_segments": 43,
+      "is_baseline": false,
+      "pareto": false
+    },
+    {
+      "pre_vad_max_segment_seconds": 3.0,
+      "asr_accumulation_seconds": 2.0,
+      "wer": 0.6244635193133047,
+      "metric": "wer",
+      "accuracy_segments": 35,
+      "accuracy_rtf": 0.7229063799270966,
+      "latency_p50_s": 5.515999999999998,
+      "latency_p95_s": 9.673899999963115,
+      "latency_segments": 35,
+      "is_baseline": false,
+      "pareto": false
+    },
+    {
+      "pre_vad_max_segment_seconds": 2.0,
+      "asr_accumulation_seconds": 2.0,
+      "wer": 0.5042918454935622,
+      "metric": "wer",
+      "accuracy_segments": 67,
+      "accuracy_rtf": 9.274887726430528,
+      "latency_p50_s": 4.543000000020488,
+      "latency_p95_s": 6.879599999892152,
+      "latency_segments": 67,
+      "is_baseline": false,
+      "pareto": true
+    }
+  ]
+}
