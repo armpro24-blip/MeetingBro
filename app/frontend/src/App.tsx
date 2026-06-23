@@ -6,6 +6,7 @@ import type { ExportMeetingInput } from "./session/useSessionSocket";
 import { useBackendStatus } from "./system/useBackendStatus";
 import { BackendGate } from "./components/BackendGate";
 import { SettingsModal } from "./components/SettingsModal";
+import { HistoryModal } from "./components/HistoryModal";
 import { fetchAudioDevices } from "./system/backendApi";
 import type { AudioDevices } from "./system/backendApi";
 
@@ -413,6 +414,7 @@ export default function App() {
   const [vocabularyOpen, setVocabularyOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"summary" | "clean" | "board" | "notes">("summary");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [audioDevice, setAudioDevice] = useState("");
   const [loopbackDevice, setLoopbackDevice] = useState("");
   const [audioDevices, setAudioDevices] = useState<AudioDevices | null>(null);
@@ -1152,6 +1154,7 @@ export default function App() {
         />
       )}
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} sessionActive={sessionEnabled} />
+      <HistoryModal open={historyOpen} onClose={() => setHistoryOpen(false)} currentMeetingId={meetingId} />
       <header className="app-header">
         <div className="brand-block">
           <div className="brand-row">
@@ -1230,6 +1233,9 @@ export default function App() {
                 <option value="de">Deutsch</option>
               </select>
             </label>
+            <button type="button" className="settings-gear" onClick={() => setHistoryOpen(true)} title="Meeting history" aria-label="Meeting history">
+              🕘
+            </button>
             <button type="button" className="settings-gear" onClick={() => setSettingsOpen(true)} title="Settings" aria-label="Settings">
               ⚙
             </button>

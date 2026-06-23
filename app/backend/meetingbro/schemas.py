@@ -72,6 +72,17 @@ class Note(BaseModel):
     created_at: datetime
 
 
+class MeetingListItem(BaseModel):
+    """Lightweight row for the meeting-history list (one entry per past meeting)."""
+
+    id: str
+    started_at: datetime
+    ended_at: Optional[datetime] = None
+    preferred_summary_language: str = "en"
+    segment_count: int = 0
+    title: Optional[str] = None
+
+
 class SessionStatePayload(BaseModel):
     state: SessionState
     meeting_id: str

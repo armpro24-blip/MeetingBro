@@ -148,6 +148,50 @@ class Storage:
             "preferred_summary_language": row[3],
         }
 
+    def list_meetings(self, limit: int = 100) -> list[dict[str, object]]:
+        """Recent meetings (newest first) with a segment count and first-line preview.
+
+        Used by the meeting-history UI. Counts and previews are derived with
+        correlated subqueries so a single round-trip returns everything the list
+        needs without loading full transcripts.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT
+                  m.id,
+                  m.started_at,
+                  m.ended_at,
+                  m.preferred_summary_language,
+                  (SELECT COUNT(*) FROM transcript_segments s WHERE s.meeting_id = m.id) AS segment_count,
+                  (SELECT s2.text FROM transcript_segments s2 WHERE s2.meeting_id = m.id
+                     ORDER BY s2.start_time ASC LIMIT 1) AS first_text
+                FROM meetings m
+                ORDER BY m.started_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "id": r[0],
+                "started_at": r[1],
+                "ended_at": r[2],
+                "preferred_summary_language": r[3],
+                "segment_count": r[4],
+                "first_text": r[5],
+            }
+            for r in rows
+        ]
+
+    def delete_meeting(self, meeting_id: str) -> None:
+        """Delete a meeting and all of its child rows (transcript, summaries, notes, speakers)."""
+        with self._lock:
+            for table in ("transcript_segments", "summary_snapshots", "notes", "speakers"):
+                self._conn.execute(f"DELETE FROM {table} WHERE meeting_id = ?", (meeting_id,))
+            self._conn.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
+            self._conn.commit()
+
     def insert_segment(self, seg: TranscriptSegment) -> None:
         with self._lock:
             self._conn.execute(

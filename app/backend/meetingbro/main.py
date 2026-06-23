@@ -28,6 +28,7 @@ from .schemas import (
     ExportMeetingRequest,
     ExportMeetingResponse,
     LanguageCode,
+    MeetingListItem,
     Note,
     SessionStatePayload,
     SummarySnapshot,
@@ -717,6 +718,39 @@ async def create_note(req: CreateNoteRequest) -> Note:
     )
     storage.insert_note(note)
     return note
+
+
+@app.get("/meetings", response_model=list[MeetingListItem])
+async def list_meetings_endpoint(
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[MeetingListItem]:
+    """List past meetings (newest first) for the history browser."""
+    storage: Storage = app.state.storage
+    items: list[MeetingListItem] = []
+    for m in storage.list_meetings(limit=limit):
+        first_text = str(m.get("first_text") or "").strip()
+        title = first_text[:80] if first_text else None
+        items.append(
+            MeetingListItem(
+                id=str(m["id"]),
+                started_at=m["started_at"],  # type: ignore[arg-type]
+                ended_at=m["ended_at"],  # type: ignore[arg-type]
+                preferred_summary_language=str(m["preferred_summary_language"]),
+                segment_count=int(m["segment_count"] or 0),
+                title=title,
+            )
+        )
+    return items
+
+
+@app.delete("/meetings/{meeting_id}")
+async def delete_meeting_endpoint(meeting_id: str) -> dict[str, bool]:
+    """Delete a past meeting and all of its data (transcript, summaries, notes)."""
+    storage: Storage = app.state.storage
+    if storage.get_meeting(meeting_id) is None:
+        raise HTTPException(status_code=404, detail="meeting not found")
+    storage.delete_meeting(meeting_id)
+    return {"deleted": True}
 
 
 @app.get("/meetings/{meeting_id}/notes", response_model=list[Note])

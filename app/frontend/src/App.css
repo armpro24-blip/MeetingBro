@@ -1812,6 +1812,138 @@ html, body, #root {
   width: min(620px, 100%);
 }
 
+.modal--history {
+  width: min(900px, 100%);
+}
+
+.history__body {
+  flex-direction: row;
+  gap: 18px;
+  min-height: 340px;
+}
+
+.history__list {
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 60vh;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  padding-right: 14px;
+}
+
+.history__item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  padding: 9px 11px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.history__item:hover {
+  background: rgba(148, 163, 184, 0.1);
+}
+
+.history__item.selected {
+  background: rgba(22, 163, 74, 0.12);
+  border-color: rgba(22, 163, 74, 0.4);
+}
+
+.history__item-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history__item-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.history__detail {
+  flex: 1 1 auto;
+  max-height: 60vh;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+.history__detail-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.history__detail-actions button {
+  font-size: 12px;
+  padding: 6px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.history__detail-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.history__delete {
+  color: #dc2626 !important;
+  border-color: rgba(220, 38, 38, 0.4) !important;
+}
+
+.history__section {
+  margin-bottom: 18px;
+}
+
+.history__section h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0 0 7px;
+}
+
+.history__summary {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.history__notes {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.history__transcript p {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.history__empty {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 8px 0;
+}
+
+.history__note {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .modal__header,
 .modal__footer {
   display: flex;
