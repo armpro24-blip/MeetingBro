@@ -207,12 +207,24 @@ class SystemAudioLoopbackSource(AudioSource):
             ) from exc
 
         mic = self._resolve_loopback_mic(sc)
-        native_rate = self._native_rate
-        native_block = max(1, int(native_rate * self._chunk_seconds))
 
         loop = asyncio.get_running_loop()
         q: queue.Queue[np.ndarray] = queue.Queue(maxsize=32)
         stop = self._stop
+
+        # The recorder may open at a different rate than first requested (some
+        # headsets reject 48 kHz). The consumer must resample from whatever rate
+        # actually opened — not an assumed one — or the audio is pitch-shifted, so
+        # the reader publishes the real rate here before streaming any audio.
+        rate_box = {"rate": self._native_rate}
+
+        # Candidate capture rates, preferred first. Bluetooth/USB headsets often
+        # refuse 48 kHz but accept 44.1/32/16 kHz; trying several is what recovers
+        # the common "loopback fails when headphones are connected" case (issue #3).
+        candidate_rates: list[int] = []
+        for r in (self._native_rate, 48_000, 44_100, 32_000, 16_000):
+            if r not in candidate_rates:
+                candidate_rates.append(r)
 
         def _reader() -> None:
             import ctypes
@@ -221,16 +233,27 @@ class SystemAudioLoopbackSource(AudioSource):
             _hr = _ole32.CoInitializeEx(None, COINIT_MULTITHREADED)
             _com_owned = _hr in (0, 1)
             try:
-                try:
-                    rec = mic.recorder(samplerate=native_rate, blocksize=native_block)
-                except RuntimeError as fmt_exc:
-                    # Some headsets (Bluetooth/USB) report a mix-format that
-                    # soundcard cannot initialise (e.g. non-float32). Log the
-                    # details and re-raise with a actionable message.
+                rec = None
+                opened_rate = self._native_rate
+                last_exc: Optional[Exception] = None
+                for rate in candidate_rates:
+                    block = max(1, int(rate * self._chunk_seconds))
+                    try:
+                        rec = mic.recorder(samplerate=rate, blocksize=block)
+                        opened_rate = rate
+                        break
+                    except Exception as fmt_exc:
+                        # Some headsets (Bluetooth/USB) report a mix-format that
+                        # soundcard cannot initialise at this rate; try the next.
+                        last_exc = fmt_exc
+                        logger.warning(
+                            "loopback open failed for %s (id=%r) at samplerate=%d: %s",
+                            mic.name, mic.id, rate, fmt_exc,
+                        )
+                if rec is None:
                     logger.error(
-                        "failed to open loopback recorder for %s (id=%r) at "
-                        "samplerate=%d blocksize=%d: %s",
-                        mic.name, mic.id, native_rate, native_block, fmt_exc,
+                        "failed to open loopback recorder for %s (id=%r) at any of %r",
+                        mic.name, mic.id, candidate_rates,
                     )
                     raise RuntimeError(
                         f"Cannot open WASAPI loopback on '{mic.name}'. "
@@ -240,15 +263,17 @@ class SystemAudioLoopbackSource(AudioSource):
                         "speakers, (2) set the headset as default *communication* "
                         "device but keep speakers as default *multimedia* device, "
                         "or (3) update the headset audio driver."
-                    ) from fmt_exc
+                    ) from last_exc
+                rate_box["rate"] = opened_rate
+                opened_block = max(1, int(opened_rate * self._chunk_seconds))
                 with rec:
                     logger.info(
                         "loopback capture started mic=%s native_rate=%d block=%d "
                         "target_rate=%d",
-                        mic, native_rate, native_block, self._sample_rate,
+                        mic, opened_rate, opened_block, self._sample_rate,
                     )
                     while not stop.is_set():
-                        data = rec.record(numframes=native_block)
+                        data = rec.record(numframes=opened_block)
                         if data is None or len(data) == 0:
                             continue
                         if data.ndim > 1:
@@ -278,7 +303,7 @@ class SystemAudioLoopbackSource(AudioSource):
                 if native_samples is None:
                     break
                 resampled = _resample_mono(
-                    native_samples, native_rate, self._sample_rate
+                    native_samples, rate_box["rate"], self._sample_rate
                 )
                 if len(resampled) == 0:
                     continue
