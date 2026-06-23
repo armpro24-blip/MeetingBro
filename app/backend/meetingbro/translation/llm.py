@@ -37,6 +37,10 @@ class LLMTranslator(Translator):
         self._anthropic_client = None
         self._openai_client = None
         self._compatible_client = OpenAICompatibleClient.from_env()
+        # Last provider error, mirroring LLMSummarizer.last_error so the session
+        # manager can surface a silent translation fallback to the UI. None means
+        # the most recent attempt succeeded (or no LLM call was attempted).
+        self.last_error: Optional[str] = None
 
     def _ensure_client(self) -> Optional[str]:
         if self._compatible_client is not None:
@@ -86,7 +90,7 @@ class LLMTranslator(Translator):
         try:
             if provider == "openai_compatible":
                 assert self._compatible_client is not None
-                return self._compatible_client.chat(
+                result = self._compatible_client.chat(
                     system=system_prompt,
                     user=text,
                     max_tokens=1024,
@@ -100,7 +104,7 @@ class LLMTranslator(Translator):
                     system=system_prompt,
                     messages=[{"role": "user", "content": text}],
                 )
-                return "".join(
+                result = "".join(
                     b.text for b in msg.content if getattr(b, "type", "") == "text"
                 ).strip()
             else:
@@ -113,9 +117,12 @@ class LLMTranslator(Translator):
                     ],
                     max_tokens=1024,
                 )
-                return (resp.choices[0].message.content or "").strip()
+                result = (resp.choices[0].message.content or "").strip()
+            self.last_error = None
+            return result
         except Exception as exc:
             logger.warning("LLM translation failed, falling back: %s", exc)
+            self.last_error = str(exc)
             return self._fallback.translate(
                 text, source_language=source_language, target_language=target_language
             )

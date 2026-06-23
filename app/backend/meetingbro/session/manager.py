@@ -306,6 +306,8 @@ class SessionManager:
         # Dedupe key for surfacing LLM summary failures to the UI once per
         # distinct error (reset when the LLM recovers).
         self._last_summary_error_emitted: Optional[str] = None
+        # Same, for live-translation failures (e.g. rejected key while subtitles on).
+        self._last_translation_error_emitted: Optional[str] = None
         self._event_queue: asyncio.Queue[SessionEvent] = asyncio.Queue(maxsize=1024)
         self._state = _State(meeting_id=str(uuid.uuid4()))
         self._stopped = asyncio.Event()
@@ -3383,6 +3385,7 @@ class SessionManager:
                 ),
             )
             translated = translated.strip()
+            await self._maybe_emit_translation_error()
             if not translated or translated == seg.text:
                 return
             seg.translations[target_language] = translated
@@ -3566,6 +3569,24 @@ class SessionManager:
                     code="llm_unavailable",
                     message=(
                         "AI summaries fell back to offline mode "
+                        f"(LLM error: {last_error}). Open Settings to check your API key."
+                    ),
+                ),
+            )
+
+    async def _maybe_emit_translation_error(self) -> None:
+        """Surface a silent live-translation fallback to the UI, once per distinct error."""
+        last_error = getattr(self._cfg.translator, "last_error", None)
+        if last_error == self._last_translation_error_emitted:
+            return
+        self._last_translation_error_emitted = last_error
+        if last_error:
+            await self._emit(
+                "error",
+                ErrorPayload(
+                    code="translation_unavailable",
+                    message=(
+                        "Live translation fell back to the original text "
                         f"(LLM error: {last_error}). Open Settings to check your API key."
                     ),
                 ),
