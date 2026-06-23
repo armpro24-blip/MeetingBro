@@ -2952,6 +2952,7 @@ class SessionManager:
                 loop,
                 samples,
                 sample_rate,
+                buf_start=buf_start,
                 prompt=prompt,
                 forced_language=forced_language,
             )
@@ -3021,6 +3022,7 @@ class SessionManager:
         samples: np.ndarray,
         sample_rate: int,
         *,
+        buf_start: float = 0.0,
         prompt: Optional[str],
         forced_language: Optional[str],
     ) -> list[ASRSegment]:

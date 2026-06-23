@@ -281,6 +281,29 @@ def _configured_preview_runtime(
             ),
         )
 
+    if preview_backend == "whisper-streaming":
+        return "whisper-streaming", formal_device
+
+    # Auto-default: when no backend is explicitly set (or set to "auto"), prefer
+    # whisper-streaming if the Qwen model dir does not exist (Whisper-only majority).
+    # When the Qwen model dir exists, keep qwen3 as the default for performance users.
+    if not preview_backend or preview_backend == "auto":
+        model_dir = _resolve_qwen_model_dir()
+        if not model_dir.exists():
+            logger.info(
+                "auto preview backend: Qwen model dir not found (%s); defaulting to whisper-streaming",
+                model_dir,
+            )
+            return "whisper-streaming", formal_device
+        # Qwen model exists — keep qwen3 as default
+        return (
+            "qwen3",
+            _env_str_auto(
+                "MEETINGBRO_PREVIEW_QWEN3_PROVIDER",
+                hardware.recommended_qwen_provider if hardware is not None else "cpu",
+            ),
+        )
+
     preview_size = os.environ.get("MEETINGBRO_PREVIEW_WHISPER_SIZE", "").strip()
     if not preview_size or preview_size.lower() == "shared":
         return "shared", formal_device
@@ -362,7 +385,10 @@ async def _ensure_preview_asr_loaded(app: FastAPI, *, profile_name: str) -> None
         if getattr(app.state, "preview_asr", None) is not None:
             return
 
-        preview_asr = _build_preview_asr(getattr(app.state, "hardware_profile", None))
+        preview_asr = _build_preview_asr(
+            getattr(app.state, "hardware_profile", None),
+            formal_asr=getattr(app.state, "asr", None),
+        )
         app.state.preview_asr = preview_asr
         if preview_asr is None:
             app.state.preview_asr_backend_name = "shared"
@@ -385,8 +411,24 @@ async def _ensure_preview_asr_loaded(app: FastAPI, *, profile_name: str) -> None
         )
 
 
-def _build_preview_asr(hardware: HardwareProfile | None = None) -> ASRAdapter | None:
+def _build_streaming_preview_adapter(formal_asr: ASRAdapter) -> "ASRAdapter":
+    """Build the whisper-streaming preview lane, sharing the formal model."""
+    from .asr.streaming_whisper_adapter import StreamingWhisperAdapter
+
+    return StreamingWhisperAdapter(formal_asr)
+
+
+def _build_preview_asr(hardware: HardwareProfile | None = None, formal_asr: Optional[ASRAdapter] = None) -> ASRAdapter | None:
     backend = os.environ.get("MEETINGBRO_PREVIEW_ASR_BACKEND", "").strip().lower()
+
+    if backend == "whisper-streaming":
+        if formal_asr is None:
+            logger.warning(
+                "whisper-streaming preview backend requested but formal_asr not provided; "
+                "using shared preview instead"
+            )
+            return None
+        return _build_streaming_preview_adapter(formal_asr)
 
     if backend == "qwen3":
         # Lazy import so that a missing sherpa-onnx never affects normal startup.
@@ -497,7 +539,7 @@ async def lifespan(app: FastAPI):
         profile_settings=startup_profile_settings,
         preview_backend_name=_preview_asr_backend_name,
     ):
-        preview_asr = _build_preview_asr(hardware)
+        preview_asr = _build_preview_asr(hardware, formal_asr=asr)
     app.state.storage = storage
     app.state.hardware_profile = hardware
     app.state.asr = asr
