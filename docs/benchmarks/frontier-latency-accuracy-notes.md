@@ -1,68 +1,69 @@
 # Latency × accuracy frontier — findings (2026-06, AMI EN2002a)
 
-Analysis of the first sweep from `scripts/benchmark_latency_accuracy_frontier.py`
-(raw numbers: [frontier-latency-accuracy.md](frontier-latency-accuracy.md) /
-`.json`). Run: AMI EN2002a SDM, `small/cpu/int8`, balanced profile, formal lane
-only, `forced_language=en`, sweeping `pre_vad_max_segment_seconds ∈ {8,6,4,3,2}`,
-`asr_accumulation_seconds=2.0`, single run per point.
+Analysis of `scripts/benchmark_latency_accuracy_frontier.py` on the real AMI
+meeting fixture. Two sweeps were run; the **hardened** one supersedes the first.
 
-## TL;DR
+- Raw numbers: [frontier-latency-accuracy.md](frontier-latency-accuracy.md) / `.json`.
+- Setup: AMI EN2002a SDM, `small/cpu/int8`, balanced profile, formal lane only,
+  `forced_language=en`.
 
-**Do not act on this as a Pareto frontier yet.** The sweep is informative but
-confounded — it changed an assumption rather than producing a knob setting to
-ship.
+## Run 1 (first pass) — what it cost us, and why we re-ran
 
-## What the data actually shows
+The first sweep (`pre_vad_max ∈ {8,6,4,3,2}`, single run, safeguard ON) was
+**confounded**: the ASR safeguard fired non-deterministically on short segments
+(`asr_rtf` spiked to a non-physical 9.27 at cap=2), latency was non-monotonic,
+and segment counts jumped around. Its `★` marks were noise artifacts. It did,
+however, hint that the 8s cap was buying neither accuracy nor latency — which the
+hardened run then confirmed.
 
-| pre_vad_max | WER | p50 | p95 | asr_rtf | seg |
+## Run 2 (hardened) — trustworthy result
+
+`pre_vad_max ∈ {8,4}` × `asr_accumulation_seconds ∈ {2.0,1.0}`, **safeguard
+disabled** (knob isolated), **3 runs/point with pooled latency samples**. The
+per-run p50 range is tight (≈±0.06 s), so these are stable.
+
+| pre_vad_max | accum | WER | p50 (s) | p50 range | p95 (s) |
 |---|---|---|---|---|---|
-| 8 (baseline) | 0.582 | **3.83** | 9.20 | 0.46 | 66 |
-| 6 | 0.545 | 4.63 | 8.07 | 0.45 | 47 |
-| 4 | 0.513 | 5.69 | 9.51 | 0.92 | 44 |
-| 3 | 0.624 | 5.52 | 9.67 | 0.72 | 35 |
-| 2 | 0.504 | 4.54 | 6.88 | **9.27** | 67 |
+| 8 (baseline) | 2.0 | 0.582 | 3.83 | 3.75–3.87 | 9.29 |
+| 8 | 1.0 | 0.582 | 3.76 | 3.68–3.80 | 9.29 |
+| 4 | 2.0 | 0.579 | 3.98 | 3.88–4.09 | **6.98** |
+| 4 | 1.0 | 0.579 | 3.97 | 3.91–3.98 | **6.98** |
 
-Three findings, in order of confidence:
+### Conclusions
 
-1. **The 8 s cap is not "buying" accuracy.** WER is flat-to-slightly-better as
-   the cap drops (0.582 → 0.545 → 0.513). Longer maximum segments do **not** help
-   Whisper on far-field, overlapping meeting speech. The premise that a big cap
-   protects accuracy is unsupported on real meeting audio.
+1. **Accuracy is flat across every knob setting** (WER 0.582 → 0.579). The 8s cap
+   buys *no* accuracy on real meeting speech, and the accumulation window doesn't
+   move it either. The "big cap protects accuracy" premise is dead.
 
-2. **The 8 s cap is not the latency lever we assumed.** Latency did **not** fall
-   as the cap dropped — the baseline (cap=8) actually had the *lowest* p50
-   (3.83 s) and p50 was non-monotonic across the sweep. Why: on real
-   conversational speech with natural pauses, segments end on the
-   trailing-silence VAD (~0.6 s) **long before** they reach the cap, so the cap
-   rarely binds. It is a worst-case guard for pause-free speech, not the
-   typical-case driver. Typical-case caption latency is governed by the
-   accumulation window + flush cadence + the resource governor — not this knob.
+2. **The accumulation window is not a latency lever.** 2.0 → 1.0 moves p50 by
+   ~0.07 s (within noise) and p95 not at all.
 
-3. **The sweep is confounded by the resource governor / ASR safeguard.** At
-   cap ≤ 4 the safeguard activated (`rtf>1` log lines) and `asr_rtf` went
-   non-physical (9.27 at cap=2, vs 0.46 baseline), with non-monotonic segment
-   counts (66/47/44/35/67). The governor *reacts* to short segments and changes
-   pipeline behaviour, so per-point latency is not a clean function of the knob.
-   The `★` Pareto mark on cap=2 is an artifact of this noise, not a real win.
+3. **`pre_vad_max_segment_seconds` is a TAIL-latency lever, not a median one.**
+   8 → 4 cuts **p95 from 9.29 s → 6.98 s (−2.3 s, ~25%)** with p50 unchanged
+   (~3.8–4.0 s) and WER flat-to-slightly-better. The cap only binds during long
+   pause-free stretches (most segments end on the ~0.6 s trailing-silence VAD
+   first), so lowering it trims the worst case without touching the typical case.
 
-## Implications
+4. **The median (~3.8 s) is immovable by these knobs** — it is the structural cost
+   of a buffered formal lane that waits for segment completion before decoding.
 
-- **Methodology must be hardened before any frontier is trustworthy:**
-  1. Hold the resource governor fixed (or disable the ASR safeguard) during the
-     sweep so the knob's effect is isolated.
-  2. Average ≥3 runs per point — realtime latency variance on a 120 s clip is
-     high (and p50/p95 from ~40–66 samples is jumpy).
-  3. Add the `asr_accumulation_seconds` axis (the more likely real latency lever).
-  4. Consider a longer clip or several real clips.
+### So what
 
-- **Strategic:** tuning the existing *buffered* knobs shows limited, noisy
-  headroom — which strengthens the case for the real prize, **streaming /
-  incremental decode with stable-prefix (LocalAgreement) commit** (Step 2): get
-  low latency from the same accurate model instead of trading along a shallow,
-  governor-confounded curve.
+- **Cheap, data-backed win:** lower `pre_vad_max_segment_seconds` 8 → 4 in the
+  balanced profile — ~25% tail-latency reduction, no accuracy cost.
+  - **Caveat:** measured on one English fixture. Validate WER stays flat on the
+    zh/de synthetic fixtures before changing the global default (accuracy-only,
+    fast). The cap is a worst-case guard, so the downside risk is low (at worst,
+    very long utterances split sooner), but breadth should be checked.
+- **The real prize is the median, and no knob touches it.** Cutting the ~3.8 s
+  median requires **Step 2: streaming / incremental decode with stable-prefix
+  (LocalAgreement) commit** — get low latency from the same accurate model rather
+  than waiting for whole segments. The frontier confirms there is no buffered-knob
+  shortcut to a lower median.
 
 ## Reproduce
 
 ```bash
-python scripts/benchmark_latency_accuracy_frontier.py --pre-vad-max 8,6,4,3,2 --accumulation 2.0
+# hardened sweep (isolated knob, pooled multi-run latency)
+python scripts/benchmark_latency_accuracy_frontier.py --pre-vad-max 8,4 --accumulation 2.0,1.0 --runs 3
 ```
