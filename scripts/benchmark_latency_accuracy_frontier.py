@@ -35,7 +35,8 @@ if hasattr(sys.stdout, "reconfigure"):
 import argparse
 import asyncio
 import json
-from dataclasses import dataclass
+import statistics
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -62,9 +63,14 @@ class _Point:
     metric: str
     accuracy_segments: int
     accuracy_rtf: float | None
+    # Latency p50/p95 computed on samples POOLED across all runs (robust).
     latency_p50: float | None
     latency_p95: float | None
     latency_segments: int
+    # Spread of the per-run p50 (min/max across runs) — exposes residual noise.
+    latency_p50_min: float | None = None
+    latency_p50_max: float | None = None
+    runs: int = 1
     is_baseline: bool = False
     pareto: bool = False
 
@@ -98,29 +104,52 @@ async def _measure(
     accumulation: float,
     skip_latency: bool,
     skip_accuracy: bool,
+    isolate_governor: bool,
+    runs: int,
     is_baseline: bool,
 ) -> _Point:
     overrides = {
         "pre_vad_max_segment_seconds": pre_vad_max,
         "asr_accumulation_seconds": accumulation,
     }
+    if isolate_governor:
+        # Disable the ASR safeguard so the knob's effect is isolated. The
+        # safeguard fires non-deterministically on short segments and changes
+        # weak-rescue/retry behaviour, which confounded the first sweep
+        # (asr_rtf spiked to 9.27). The resource governor only gates background
+        # work (off in this benchmark), so this is the relevant pin.
+        overrides["asr_safeguard_enabled"] = False
+
     wer: float | None = None
     metric = "wer"
     acc_segments = 0
     acc_rtf: float | None = None
     if not skip_accuracy:
+        # WER is deterministic for a fixed config, so score it once.
         acc = await ba._run_accuracy(adapter, fixture, apply_vocab=True, extra_overrides=overrides)
         wer = acc.error_rate
         metric = acc.metric
         acc_segments = acc.segments
         acc_rtf = acc.asr_rtf
 
-    p50 = p95 = None
+    p50 = p95 = p50_min = p50_max = None
     lat_segments = 0
     if not skip_latency:
-        lat = await ba._run_latency(adapter, wav, extra_overrides=overrides)
-        p50, p95 = lat.p50, lat.p95
-        lat_segments = lat.segments
+        # Realtime latency has run-to-run variance, so repeat and pool the raw
+        # per-segment samples across runs before taking percentiles.
+        pooled: list[float] = []
+        per_run_p50: list[float] = []
+        for _ in range(max(1, runs)):
+            lat = await ba._run_latency(adapter, wav, extra_overrides=overrides)
+            pooled.extend(lat.samples)
+            if lat.p50 == lat.p50:  # not NaN
+                per_run_p50.append(lat.p50)
+            lat_segments = lat.segments
+        if pooled:
+            p50 = float(statistics.median(pooled))
+            p95 = float(np.percentile(pooled, 95))
+        if per_run_p50:
+            p50_min, p50_max = min(per_run_p50), max(per_run_p50)
 
     return _Point(
         pre_vad_max_segment_seconds=pre_vad_max,
@@ -132,6 +161,9 @@ async def _measure(
         latency_p50=p50,
         latency_p95=p95,
         latency_segments=lat_segments,
+        latency_p50_min=p50_min,
+        latency_p50_max=p50_max,
+        runs=max(1, runs),
         is_baseline=is_baseline,
     )
 
@@ -150,20 +182,26 @@ def _build_report(args, fixture: dict, points: list[_Point]) -> str:
              f"{fixture.get('source', 'n/a')})")
     L.append(f"- Whisper: `{args.model_size}` / `{args.device}` / `{args.compute_type}` / beam `{args.beam_size}`")
     L.append("- runtime profile: `balanced` (formal lane only, fast_preview disabled), forced_language=`en`")
+    isolation = "ASR safeguard DISABLED (knob isolated)" if not args.keep_safeguard else "production-faithful (safeguard on)"
+    L.append(f"- governor: {isolation};  runs/point: {args.runs} (latency samples pooled across runs)")
     L.append(f"- swept: pre_vad_max_segment_seconds={args.pre_vad_max}  asr_accumulation_seconds={args.accumulation}")
     if args.label:
         L.append(f"- label: {args.label}")
     L.append("")
     L.append("## 前沿点")
     L.append("")
-    L.append("| | pre_vad_max (s) | accum (s) | latency p50 (s) | p95 (s) | WER | seg(acc/lat) | asr_rtf |")
-    L.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
+    L.append("| | pre_vad_max (s) | accum (s) | latency p50 (s) | p50 range | p95 (s) | WER | seg(acc/lat) | asr_rtf |")
+    L.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for p in points:
         flag = "★" if p.pareto else ("•" if p.is_baseline else "")
         base = " (baseline)" if p.is_baseline else ""
+        spread = (
+            f"{ba._fmt(p.latency_p50_min, 2)}–{ba._fmt(p.latency_p50_max, 2)}"
+            if p.latency_p50_min is not None else "n/a"
+        )
         L.append(
             f"| {flag} | {p.pre_vad_max_segment_seconds:g}{base} | {p.asr_accumulation_seconds:g} | "
-            f"{ba._fmt(p.latency_p50, 2)} | {ba._fmt(p.latency_p95, 2)} | {ba._fmt(p.wer)} | "
+            f"{ba._fmt(p.latency_p50, 2)} | {spread} | {ba._fmt(p.latency_p95, 2)} | {ba._fmt(p.wer)} | "
             f"{p.accuracy_segments}/{p.latency_segments} | {ba._fmt(p.accuracy_rtf, 2)} |"
         )
     L.append("")
@@ -189,6 +227,8 @@ def _to_json(args, fixture: dict, points: list[_Point]) -> dict:
             "runtime_profile": "balanced",
             "pre_vad_max": args.pre_vad_max,
             "accumulation": args.accumulation,
+            "runs": args.runs,
+            "safeguard_disabled": not args.keep_safeguard,
             "label": args.label,
         },
         "points": [
@@ -201,7 +241,10 @@ def _to_json(args, fixture: dict, points: list[_Point]) -> dict:
                 "accuracy_rtf": p.accuracy_rtf,
                 "latency_p50_s": p.latency_p50,
                 "latency_p95_s": p.latency_p95,
+                "latency_p50_min_s": p.latency_p50_min,
+                "latency_p50_max_s": p.latency_p50_max,
                 "latency_segments": p.latency_segments,
+                "runs": p.runs,
                 "is_baseline": p.is_baseline,
                 "pareto": p.pareto,
             }
@@ -222,6 +265,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--device", default="cpu")
     p.add_argument("--compute-type", default="int8")
     p.add_argument("--beam-size", type=int, default=3)
+    p.add_argument("--runs", type=int, default=1,
+                   help="Realtime latency passes per point; samples pooled across runs (default: 1).")
+    p.add_argument("--keep-safeguard", action="store_true",
+                   help="Keep the ASR safeguard on (production-faithful, but confounds the knob sweep). "
+                        "Default isolates the knob by disabling it.")
     p.add_argument("--skip-latency", action="store_true", help="Measure WER only (fast; no realtime passes).")
     p.add_argument("--skip-accuracy", action="store_true", help="Measure latency only.")
     p.add_argument("--out", default=str(DEFAULT_OUT))
@@ -274,6 +322,7 @@ async def main(argv: list[str]) -> int:
             adapter, fixture, wav,
             pre_vad_max=pvm, accumulation=acc,
             skip_latency=args.skip_latency, skip_accuracy=args.skip_accuracy,
+            isolate_governor=not args.keep_safeguard, runs=args.runs,
             is_baseline=is_baseline,
         )
         points.append(pt)

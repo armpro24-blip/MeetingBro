@@ -149,6 +149,9 @@ class _LatencyResult:
     preview_p95: float | None = None
     preview_segments: int = 0
     preview_rtf: float | None = None
+    # Raw per-segment formal-lane latencies (seconds), so callers can pool
+    # samples across multiple runs and compute robust percentiles.
+    samples: list[float] = field(default_factory=list)
 
 
 def _wav_duration_seconds(path: Path) -> float:
@@ -382,6 +385,7 @@ async def _run_latency(
                 preview_p95=(None if not preview_latencies else pv_p95),
                 preview_segments=len(preview_latencies),
                 preview_rtf=preview_rtf,
+                samples=list(latencies),
             )
     finally:
         if is_temp and prepared.exists():
